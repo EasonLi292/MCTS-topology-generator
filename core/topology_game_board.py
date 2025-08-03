@@ -59,9 +59,9 @@ class Component:
 # ============================================================
 
 class Breadboard:
-    """Simulates a 50×12 breadboard and manages component placement."""
+    """Simulates a 65×12 breadboard and manages component placement."""
 
-    ROWS = 50
+    ROWS = 65
     COLUMNS = 12
 
     def __init__(self):
