@@ -1,6 +1,12 @@
+"""Utilities for simulating generated circuits via PySpice."""
+
 from typing import Optional
 import PySpice
-from topology_game_board import Breadboard
+
+# ``Breadboard`` lives in the same package; use a relative import so that
+# this module works whether ``core`` is imported as a package or executed
+# directly from the repository root.
+from .topology_game_board import Breadboard
 
 def generate_netlist(breadboard: Breadboard) -> str:
     """Converts Breadboard to SPICE netlist."""
