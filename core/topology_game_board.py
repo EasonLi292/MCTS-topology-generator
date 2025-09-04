@@ -90,7 +90,7 @@ class Breadboard:
         self.vout_placed = False
         
         # Track placed wires to avoid duplicates
-        self.placed_wires: Set[Tuple[int, int, int, int]] = set()
+        self.placed_wires: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
 
     def find(self, row: int) -> int:
         """Union-find with path compression"""
@@ -106,7 +106,7 @@ class Breadboard:
             self.uf_parent[root2] = root1
 
     def is_empty(self, row: int, col: int) -> bool:
-        """Check if a grid position is empty"""
+        """Check if a grid position is empty (i.e., no non-wire component occupies it)"""
         return 0 <= row < self.ROWS and 0 <= col < self.COLUMNS and self.grid[row][col] is None
 
     def get_node(self, row: int) -> Node:
@@ -116,7 +116,6 @@ class Breadboard:
     def row_in_active_net(self, row: int) -> bool:
         """Check if row is in a net that has components or is a power rail"""
         root = self.find(row)
-        
         # Check if any row with this root has pins or is a power rail
         for r in range(self.ROWS):
             if self.find(r) == root:
@@ -124,7 +123,7 @@ class Breadboard:
                 # Power rails are always active
                 if node.node_type in [NodeType.VSS, NodeType.VDD]:
                     return True
-                # Rows with components are active
+                # Rows with components or wires are active
                 if len(node.connected_pins) > 0:
                     return True
         return False
@@ -167,7 +166,7 @@ class Breadboard:
             if not self.is_empty(start_row, column):
                 return False
             
-            # CRITICAL FIX: Vin/Vout must be placed on a floating row.
+            # Vin/Vout must be placed on a floating row.
             if not self.is_row_floating(start_row):
                 return False
 
@@ -224,8 +223,29 @@ class Breadboard:
 
         return component
 
+    def _endpoint_is_rail(self, row: int) -> bool:
+        return row == self.VSS_ROW or row == self.VDD_ROW
+
+    def _endpoint_is_occupied(self, row: int, col: int) -> bool:
+        """Occupied means a non-wire component occupies this hole."""
+        return not self.is_empty(row, col)
+
     def can_place_wire(self, row1: int, col1: int, row2: int, col2: int) -> bool:
-        """Check if wire can be placed between two positions"""
+        """
+        Check if wire can be placed between two positions.
+
+        Rules:
+        - No wires within the same row.
+        - Endpoints must be valid coordinates.
+        - Duplicate wires are disallowed (order-independent).
+        - Allowed endpoint combos:
+            * occupied -> occupied
+            * occupied -> empty
+            * (either end) -> rail
+          Disallowed:
+            * empty -> empty (unless one end is a rail)
+        - At least one end must already be connected (active net) or be a rail.
+        """
         if row1 == row2:
             return False  # No wires within the same row
         
@@ -239,24 +259,26 @@ class Breadboard:
         wire_key = tuple(sorted([(row1, col1), (row2, col2)]))
         if wire_key in self.placed_wires:
             return False
-        
-        # Check if positions are available for wiring
-        pos1_available = (self.is_empty(row1, col1) or 
-                         row1 == self.VSS_ROW or row1 == self.VDD_ROW)
-        pos2_available = (self.is_empty(row2, col2) or 
-                         row2 == self.VSS_ROW or row2 == self.VDD_ROW)
-        
-        if not (pos1_available and pos2_available):
+
+        # Determine endpoint categories
+        rail1 = self._endpoint_is_rail(row1)
+        rail2 = self._endpoint_is_rail(row2)
+        occ1 = self._endpoint_is_occupied(row1, col1)
+        occ2 = self._endpoint_is_occupied(row2, col2)
+        empty1 = (not occ1) and (not rail1)
+        empty2 = (not occ2) and (not rail2)
+
+        # Disallow empty->empty unless a rail is involved
+        if empty1 and empty2 and not (rail1 or rail2):
+            return False
+
+        # Connectivity requirement (progress constraint)
+        row1_connected = rail1 or self.is_row_connected(row1)
+        row2_connected = rail2 or self.is_row_connected(row2)
+        if not (row1_connected or row2_connected):
             return False
         
-        # At least one end must be connected to something (not floating)
-        # Using fixed connectivity check
-        row1_connected = (row1 == self.VSS_ROW or row1 == self.VDD_ROW or 
-                         self.is_row_connected(row1))
-        row2_connected = (row2 == self.VSS_ROW or row2 == self.VDD_ROW or 
-                         self.is_row_connected(row2))
-        
-        return row1_connected or row2_connected
+        return True
 
     def place_wire(self, row1: int, col1: int, row2: int, col2: int) -> Optional[Component]:
         """Place a wire connecting two positions"""
@@ -275,10 +297,9 @@ class Breadboard:
         component = Component(type="wire", pins=pin_positions, id=self.component_counter)
         self.placed_components.append(component)
 
-        # Update grid and connections (but not for power rails)
+        # IMPORTANT: Do not occupy grid cells with wires.
+        # Just record the wire on the nodes for netlist/debugging.
         for idx, (r, c) in enumerate(pin_positions):
-            if r != self.VSS_ROW and r != self.VDD_ROW:  # Don't occupy power rail grid
-                self.grid[r][c] = (component, idx)
             self.get_node(r).connected_pins.append((component, idx))
 
         return component
@@ -313,44 +334,80 @@ class Breadboard:
         return actions
 
     def get_wire_actions(self, target_column: int) -> List[Tuple]:
-        """Generate wire placement actions - enhanced with same-column connections"""
-        actions = []
+        """
+        Generate wire placement actions.
+        Sources:
+          - Any OCCUPIED positions (non-wire components) to the LEFT of target column.
+          - Rails in the TARGET column (VSS/VDD).
+          - OCCUPIED positions in the TARGET column (same-column connections).
+        Targets:
+          - EMPTY positions in the TARGET column.
+          - OCCUPIED positions in the TARGET column.
+          - Rails in the TARGET column.
+        This supports occupied→occupied and occupied→empty, as well as rail connections.
+        """
+        actions: List[Tuple] = []
         
-        # Get all existing component positions (left of target column)
-        component_positions = []
-        for col in range(target_column):  # Only look left of current column
+        # Collect occupied positions (non-empty grid cells) to the left of target column
+        occupied_left: List[Tuple[int, int]] = []
+        for col in range(target_column):
             for row in range(self.ROWS):
                 if not self.is_empty(row, col):
-                    component_positions.append((row, col))
-        
-        # Also include power rail positions in target column for connections
-        component_positions.append((self.VSS_ROW, target_column))
-        component_positions.append((self.VDD_ROW, target_column))
-        
-        # Get empty positions in target column
-        empty_positions = []
+                    occupied_left.append((row, col))
+
+        # Rails in the target column are always candidate endpoints
+        rails_in_target = [(self.VSS_ROW, target_column), (self.VDD_ROW, target_column)]
+
+        # Empty positions in target column (working rows only)
+        empty_in_target: List[Tuple[int, int]] = []
         for row in range(self.WORK_START_ROW, self.WORK_END_ROW + 1):
             if self.is_empty(row, target_column):
-                empty_positions.append((row, target_column))
-        
-        # Wire from existing components to empty positions in target column
-        for comp_row, comp_col in component_positions:
-            for empty_row, empty_col in empty_positions:
-                if self.can_place_wire(comp_row, comp_col, empty_row, empty_col):
-                    actions.append(("wire", comp_row, comp_col, empty_row, empty_col))
-        
-        # Add same-column wiring within target column
-        # Connect occupied positions to empty positions within the same column
-        occupied_in_target = []
-        for row in range(self.WORK_START_ROW, self.WORK_END_ROW + 1):
+                empty_in_target.append((row, target_column))
+
+        # Occupied positions in target column (non-empty grid cells)
+        occupied_in_target: List[Tuple[int, int]] = []
+        for row in range(self.ROWS):
             if not self.is_empty(row, target_column):
                 occupied_in_target.append((row, target_column))
-        
-        # Wire between occupied and empty positions in same column
-        for occ_row, occ_col in occupied_in_target:
-            for empty_row, empty_col in empty_positions:
-                if self.can_place_wire(occ_row, occ_col, empty_row, empty_col):
-                    actions.append(("wire", occ_row, occ_col, empty_row, empty_col))
+
+        # 1) From occupied-left -> empty-in-target
+        for s_row, s_col in occupied_left:
+            for t_row, t_col in empty_in_target:
+                if self.can_place_wire(s_row, s_col, t_row, t_col):
+                    actions.append(("wire", s_row, s_col, t_row, t_col))
+
+        # 2) From occupied-left -> occupied-in-target (occupied→occupied)
+        for s_row, s_col in occupied_left:
+            for t_row, t_col in occupied_in_target:
+                if self.can_place_wire(s_row, s_col, t_row, t_col):
+                    actions.append(("wire", s_row, s_col, t_row, t_col))
+
+        # 3) From occupied-left -> rails in target
+        for s_row, s_col in occupied_left:
+            for t_row, t_col in rails_in_target:
+                if self.can_place_wire(s_row, s_col, t_row, t_col):
+                    actions.append(("wire", s_row, s_col, t_row, t_col))
+
+        # 4) Same-column connections within target column:
+        #    a) occupied-in-target -> empty-in-target
+        for s_row, s_col in occupied_in_target:
+            for t_row, t_col in empty_in_target:
+                if self.can_place_wire(s_row, s_col, t_row, t_col):
+                    actions.append(("wire", s_row, s_col, t_row, t_col))
+
+        #    b) occupied-in-target -> occupied-in-target (occupied→occupied)
+        for i in range(len(occupied_in_target)):
+            s_row, s_col = occupied_in_target[i]
+            for j in range(i + 1, len(occupied_in_target)):
+                t_row, t_col = occupied_in_target[j]
+                if self.can_place_wire(s_row, s_col, t_row, t_col):
+                    actions.append(("wire", s_row, s_col, t_row, t_col))
+
+        #    c) occupied-in-target -> rails in target
+        for s_row, s_col in occupied_in_target:
+            for t_row, t_col in rails_in_target:
+                if self.can_place_wire(s_row, s_col, t_row, t_col):
+                    actions.append(("wire", s_row, s_col, t_row, t_col))
         
         return actions
 
@@ -446,24 +503,33 @@ class Breadboard:
 
     def get_netlist(self) -> Dict[int, List[Tuple[str, str]]]:
         """Generate netlist with component and pin details"""
-        netlist = {}
-        for node in self.nodes:
-            if node.connected_pins or node.node_type != NodeType.NORMAL:
-                net_id = self.find(node.row_index)
-                if net_id not in netlist:
-                    netlist[net_id] = []
-                    # Add net type based on what's in this net
-                    net_root_node = self.get_node(net_id)
-                    if net_root_node.node_type == NodeType.VSS:
-                        netlist[net_id].append(("VSS", ""))
-                    elif net_root_node.node_type == NodeType.VDD:
-                        netlist[net_id].append(("VDD", ""))
-                
+        netlist: Dict[int, List[Tuple[str, str]]] = {}
+
+        # Group rows by net
+        rows_by_net: Dict[int, List[int]] = {}
+        for r in range(self.ROWS):
+            net_id = self.find(r)
+            rows_by_net.setdefault(net_id, []).append(r)
+
+        for net_id, rows in rows_by_net.items():
+            entries: List[Tuple[str, str]] = []
+
+            # Label rails if present in this net (VSS at row 0, VDD at row 29)
+            if self.VSS_ROW in rows:
+                entries.append(("VSS", ""))
+            if self.VDD_ROW in rows:
+                entries.append(("VDD", ""))
+
+            # Collect all pins touching rows in this net
+            for r in rows:
+                node = self.get_node(r)
                 for comp, pin_idx in node.connected_pins:
                     info = COMPONENT_CATALOG.get(comp.type)
                     pin_name = (info.pin_names[pin_idx] if info and pin_idx < len(info.pin_names) 
                               else f"pin{pin_idx}")
-                    netlist[net_id].append((f"{comp.type}_{comp.id}", pin_name))
+                    entries.append((f"{comp.type}_{comp.id}", pin_name))
+
+            netlist[net_id] = entries
         
         return netlist
 
@@ -484,21 +550,18 @@ class Breadboard:
         result += f"VSS: row {self.VSS_ROW}, VDD: row {self.VDD_ROW}\n"
         result += f"VIN placed: {self.vin_placed}, VOUT placed: {self.vout_placed}\n"
         result += f"Components: {len(self.placed_components)}\n"
-        
         # Component breakdown
-        comp_types = {}
+        comp_types: Dict[str, int] = {}
         for comp in self.placed_components:
             comp_types[comp.type] = comp_types.get(comp.type, 0) + 1
         result += f"Types: {comp_types}\n"
-        
         # Circuit completion status
         result += f"Circuit complete: {self.is_complete_and_valid()}\n"
-        
         return result
 
 
 # ============================================================
-# Test Function
+# Test Functions
 # ============================================================
 
 def test_connectivity_fixes():
@@ -517,7 +580,7 @@ def test_connectivity_fixes():
     print(f"Row 5 connected: {b.is_row_connected(5)}")
     print(f"Row 5 floating: {b.is_row_floating(5)}")
     
-    # Test 2: Place wire from row 5 to row 10
+    # Test 2: Place wire from row 5 to row 10 (occupied->empty)
     print("\n=== Test 2: Place wire (5,0) -> (10,0) ===")
     success = b.place_wire(5, 0, 10, 0)
     print(f"Wire placed: {success is not None}")
@@ -540,7 +603,7 @@ def test_connectivity_fixes():
     duplicate_success = b.place_wire(5, 0, 10, 0)
     print(f"Duplicate wire placed: {duplicate_success is not None}")  # Should be False
     
-    # Test 5: Power rail connection
+    # Test 5: Power rail connection (to VDD row 29)
     print("\n=== Test 5: Connect to power rail ===")
     power_wire = b.place_wire(11, 0, b.VDD_ROW, 0)
     print(f"Power wire placed: {power_wire is not None}")
@@ -564,7 +627,7 @@ def test_new_breadboard():
     print(f"Initial legal actions: {len(initial_actions)}")
     
     # Show action breakdown
-    action_types = {}
+    action_types: Dict[str, int] = {}
     for action in initial_actions:
         action_types[action[0]] = action_types.get(action[0], 0) + 1
     print(f"Action types: {action_types}")
@@ -586,7 +649,7 @@ def test_new_breadboard():
         print(f"2. Placing resistor: {resistor_actions[0]}")
         b.apply_action(resistor_actions[0])
     
-    # 3. Place VOUT on a connected row (should work with relaxed rules)
+    # 3. Place VOUT on a connected row (works if that row is floating on place-time per rules)
     actions = b.legal_actions()
     vout_actions = [a for a in actions if a[0] == 'vout']
     if vout_actions:
@@ -599,12 +662,12 @@ def test_new_breadboard():
     wire_actions = [a for a in actions if a[0] == 'wire']
     print(f"4. Available wire actions: {len(wire_actions)}")
     if wire_actions:
-        # Find a power rail connection
+        # Prefer a power rail connection if available
         power_wires = [a for a in wire_actions if 
-                      a[1] in [b.VSS_ROW, b.VDD_ROW] or a[3] in [b.VSS_ROW, b.VDD_ROW]]
-        if power_wires:
-            print(f"   Power wire action: {power_wires[0]}")
-            b.apply_action(power_wires[0])
+                       a[1] in [b.VSS_ROW, b.VDD_ROW] or a[3] in [b.VSS_ROW, b.VDD_ROW]]
+        chosen = power_wires[0] if power_wires else wire_actions[0]
+        print(f"   Wire action: {chosen}")
+        b.apply_action(chosen)
     
     print(f"\nFinal state:")
     print(b)
