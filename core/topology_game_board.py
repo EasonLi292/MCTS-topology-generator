@@ -1,3 +1,63 @@
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import Dict, List, Optional, Tuple, Set
+import copy
+
+# ============================================================
+# Component Metadata
+# ============================================================
+
+@dataclass(frozen=True)
+class ComponentInfo:
+    pin_count: int
+    vertical_only: bool
+    priority: int = 1
+    pin_names: List[str] = field(default_factory=list)
+    can_place_multiple: bool = True  # Can this component be placed multiple times?
+
+COMPONENT_CATALOG: Dict[str, ComponentInfo] = {
+    'resistor': ComponentInfo(2, True, priority=3, pin_names=['p1', 'p2']),
+    'capacitor': ComponentInfo(2, True, priority=2, pin_names=['p1', 'p2']),
+    'inductor': ComponentInfo(2, True, priority=1, pin_names=['p1', 'p2']),
+    'diode': ComponentInfo(2, True, priority=2, pin_names=['anode', 'cathode']),
+    'nmos3': ComponentInfo(3, True, priority=3, pin_names=['drain', 'gate', 'source']),
+    'pmos3': ComponentInfo(3, True, priority=3, pin_names=['drain', 'gate', 'source']),
+    'npn': ComponentInfo(3, True, priority=2, pin_names=['collector', 'base', 'emitter']),
+    'pnp': ComponentInfo(3, True, priority=2, pin_names=['collector', 'base', 'emitter']),
+    'vin': ComponentInfo(1, True, priority=5, pin_names=['signal'], can_place_multiple=False),
+    'vout': ComponentInfo(1, True, priority=5, pin_names=['signal'], can_place_multiple=False),
+    'wire': ComponentInfo(2, False, priority=4, pin_names=['p1', 'p2']),
+}
+
+# ============================================================
+# Node Model
+# ============================================================
+
+class NodeType(Enum):
+    NORMAL = auto()
+    VDD = auto()  # Power rail - always at row 29
+    VSS = auto()  # Ground rail - always at row 0
+
+@dataclass
+class Node:
+    row_index: int
+    node_type: NodeType = NodeType.NORMAL
+    connected_pins: List[Tuple["Component", int]] = field(default_factory=list)
+
+# ============================================================
+# Component Placement
+# ============================================================
+
+@dataclass
+class Component:
+    type: str
+    pins: List[Tuple[int, int]]  # [(row, col)]
+    id: int = 0
+
+# ============================================================
+# Breadboard Class
+# ============================================================
+
 import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set
