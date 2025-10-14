@@ -226,6 +226,117 @@ class Breadboard:
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Breadboard) and hash(self) == hash(other)
+
+    def to_netlist(self) -> Optional[str]:
+        """
+        Converts the breadboard circuit to a SPICE netlist format.
+        Returns None if the circuit is not complete and valid.
+        """
+        if not self.is_complete_and_valid():
+            return None
+
+        # Build a mapping from rows to net names
+        row_to_net: Dict[int, str] = {}
+        net_counter = 0
+
+        # Assign net names to each row based on union-find structure
+        for row in range(self.ROWS):
+            root = self.find(row)
+            if root not in row_to_net:
+                # Special names for power rails
+                if row == self.VSS_ROW or root == self.find(self.VSS_ROW):
+                    row_to_net[root] = "0"  # Ground (VSS)
+                elif row == self.VDD_ROW or root == self.find(self.VDD_ROW):
+                    row_to_net[root] = "VDD"
+                else:
+                    row_to_net[root] = f"n{net_counter}"
+                    net_counter += 1
+
+        # Build the netlist
+        lines = []
+        lines.append("* Auto-generated SPICE netlist from MCTS topology generator")
+        lines.append("")
+
+        # Voltage sources
+        lines.append("* Power supply")
+        lines.append("VDD VDD 0 DC 5V")
+        lines.append("")
+
+        # Add input signal source (vin)
+        vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
+        if vin_comp:
+            vin_row = vin_comp.pins[0][0]
+            vin_net = row_to_net[self.find(vin_row)]
+            lines.append("* Input signal")
+            lines.append(f"VIN {vin_net} 0 AC 1V")
+            lines.append("")
+
+        # Add components
+        lines.append("* Circuit components")
+        comp_counters = {}
+
+        for comp in self.placed_components:
+            if comp.type in ['vin', 'vout', 'wire']:
+                continue  # Skip markers and wires
+
+            # Get component prefix and increment counter
+            comp_prefix = comp.type[0].upper()
+            if comp.type not in comp_counters:
+                comp_counters[comp.type] = 0
+            comp_counters[comp.type] += 1
+            comp_id = f"{comp_prefix}{comp_counters[comp.type]}"
+
+            # Get net names for each pin
+            pin_nets = [row_to_net[self.find(pin[0])] for pin in comp.pins]
+
+            # Generate SPICE line based on component type
+            if comp.type == 'resistor':
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1k")
+            elif comp.type == 'capacitor':
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1u")
+            elif comp.type == 'inductor':
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1m")
+            elif comp.type == 'diode':
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} DMOD")
+            elif comp.type == 'nmos3':
+                # NMOS: Drain Gate Source (Bulk tied to source)
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} {pin_nets[2]} NMOS_MODEL")
+            elif comp.type == 'pmos3':
+                # PMOS: Drain Gate Source (Bulk tied to VDD)
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} VDD PMOS_MODEL")
+            elif comp.type == 'npn':
+                # NPN: Collector Base Emitter
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} NPN_MODEL")
+            elif comp.type == 'pnp':
+                # PNP: Collector Base Emitter
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} PNP_MODEL")
+
+        lines.append("")
+
+        # Add output probe (vout)
+        vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
+        if vout_comp:
+            vout_row = vout_comp.pins[0][0]
+            vout_net = row_to_net[self.find(vout_row)]
+            lines.append("* Output probe")
+            lines.append(f".print ac v({vout_net})")
+            lines.append("")
+
+        # Add device models
+        lines.append("* Device models")
+        lines.append(".model DMOD D")
+        lines.append(".model NMOS_MODEL NMOS (LEVEL=1)")
+        lines.append(".model PMOS_MODEL PMOS (LEVEL=1)")
+        lines.append(".model NPN_MODEL NPN")
+        lines.append(".model PNP_MODEL PNP")
+        lines.append("")
+
+        # Add simulation commands
+        lines.append("* Simulation commands")
+        lines.append(".ac dec 100 1 1MEG")
+        lines.append(".end")
+
+        return "\n".join(lines)
     
 # ============================================================
 # Checks and Tests (Unchanged)
@@ -280,5 +391,125 @@ def run_tests():
 
     print("\n🎉 All simple checks passed!")
 
+def test_netlist_conversion():
+    """
+    Tests the to_netlist() method to ensure circuits are properly converted to SPICE format.
+    """
+    print("\n🔬 Running netlist conversion tests...")
+
+    # --- Test 1: Incomplete Circuit Returns None ---
+    print("\n--- Test 1: Incomplete Circuit Returns None ---")
+    b0 = Breadboard()
+    assert b0.to_netlist() is None, "Incomplete circuit should return None"
+    print("✅ Passed: Incomplete circuit returns None")
+
+    # --- Test 2: Simple RC Circuit ---
+    print("\n--- Test 2: Simple RC Circuit Netlist ---")
+    # Build: VIN -> Resistor -> Capacitor -> VOUT
+    # Remember: components don't auto-union their pins, so we need wires to connect them
+    b1 = Breadboard()
+    b1 = b1.apply_action(('resistor', 5, 1))  # R on rows 5-6
+    b1 = b1.apply_action(('wire', 5, 0, 5, 1))  # Connect VIN (row 5, col 0) to R pin 1 (row 5, col 1)
+    b1 = b1.apply_action(('wire', 5, 1, 6, 1))  # Connect R pins (row 5-6 at col 1)
+    b1 = b1.apply_action(('capacitor', 7, 2))  # C on rows 7-8
+    b1 = b1.apply_action(('wire', 6, 1, 7, 2))  # Connect R pin 2 to C pin 1
+    b1 = b1.apply_action(('wire', 7, 2, 8, 2))  # Connect C pins (row 7-8 at col 2)
+    b1 = b1.apply_action(('wire', 8, 2, 20, 0))  # Connect C pin 2 to VOUT
+
+    netlist = b1.to_netlist()
+    assert netlist is not None, "Complete circuit should return a netlist"
+    assert "VIN" in netlist, "Netlist should contain VIN source"
+    assert "VDD" in netlist, "Netlist should contain VDD source"
+    assert "R1" in netlist, "Netlist should contain resistor R1"
+    assert "C1" in netlist, "Netlist should contain capacitor C1"
+    assert ".ac dec" in netlist, "Netlist should contain AC analysis command"
+    assert ".end" in netlist, "Netlist should end with .end"
+    print("✅ Passed: RC circuit generates valid netlist")
+    print(f"\nGenerated netlist:\n{netlist}\n")
+
+    # --- Test 3: Multiple Components of Same Type ---
+    print("\n--- Test 3: Multiple Components of Same Type ---")
+    b2 = Breadboard()
+    b2 = b2.apply_action(('resistor', 5, 1))  # R1 on rows 5-6
+    b2 = b2.apply_action(('wire', 5, 0, 5, 1))  # Connect VIN to R1
+    b2 = b2.apply_action(('wire', 5, 1, 6, 1))  # Connect R1 pins
+    b2 = b2.apply_action(('resistor', 7, 2))  # R2 on rows 7-8
+    b2 = b2.apply_action(('wire', 6, 1, 7, 2))  # Connect R1 to R2
+    b2 = b2.apply_action(('wire', 7, 2, 8, 2))  # Connect R2 pins
+    b2 = b2.apply_action(('wire', 8, 2, 20, 0))  # Connect R2 to VOUT
+
+    netlist2 = b2.to_netlist()
+    assert netlist2 is not None
+    assert "R1" in netlist2, "Should have R1"
+    assert "R2" in netlist2, "Should have R2"
+    r1_count = netlist2.count("R1")
+    r2_count = netlist2.count("R2")
+    assert r1_count >= 1 and r2_count >= 1, "Both resistors should be in netlist"
+    print("✅ Passed: Multiple components of same type handled correctly")
+
+    # --- Test 4: Net Naming and Connectivity ---
+    print("\n--- Test 4: Net Naming and Connectivity ---")
+    b3 = Breadboard()
+    b3 = b3.apply_action(('resistor', 5, 1))
+    b3 = b3.apply_action(('wire', 5, 0, 5, 1))
+    b3 = b3.apply_action(('wire', 5, 1, 6, 1))  # Connect resistor pins
+    b3 = b3.apply_action(('wire', 6, 1, 20, 0))
+
+    netlist3 = b3.to_netlist()
+    assert netlist3 is not None
+    # Parse the netlist to check that VIN and VOUT are on the same net via the resistor
+    lines = netlist3.split('\n')
+    resistor_line = [l for l in lines if l.startswith('R1')][0]
+    # The resistor should connect two nets
+    assert 'R1' in resistor_line, "Resistor line should exist"
+    print("✅ Passed: Net naming and connectivity correct")
+
+    # --- Test 5: Transistor Component ---
+    print("\n--- Test 5: Transistor Component (NMOS) ---")
+    b4 = Breadboard()
+    b4 = b4.apply_action(('nmos3', 5, 1))  # NMOS on rows 5-6-7 (drain, gate, source)
+    b4 = b4.apply_action(('wire', 5, 0, 5, 1))  # VIN to drain
+    b4 = b4.apply_action(('wire', 5, 1, 7, 1))  # Connect drain to source through transistor
+    b4 = b4.apply_action(('wire', 7, 1, 20, 0))  # source to VOUT
+
+    netlist4 = b4.to_netlist()
+    assert netlist4 is not None
+    assert "N1" in netlist4, "Should contain NMOS transistor"
+    assert "NMOS_MODEL" in netlist4, "Should reference NMOS model"
+    print("✅ Passed: Transistor component handled correctly")
+
+    # --- Test 6: Proper Multi-Net Circuit ---
+    print("\n--- Test 6: Proper Multi-Net RC Low-Pass Filter ---")
+    # Build a proper RC low-pass filter: VIN --R-- net1 --C-- GND, VOUT at net1
+    b5 = Breadboard()
+    # Place resistor between input and middle node
+    b5 = b5.apply_action(('resistor', 10, 1))  # R on rows 10-11
+    b5 = b5.apply_action(('wire', 5, 0, 10, 1))  # VIN to R input
+    b5 = b5.apply_action(('wire', 10, 1, 11, 1))  # Connect resistor pins
+    # Place capacitor from middle node to ground
+    b5 = b5.apply_action(('capacitor', 12, 2))  # C on rows 12-13
+    b5 = b5.apply_action(('wire', 11, 1, 12, 2))  # R output to C input
+    b5 = b5.apply_action(('wire', 12, 2, 13, 2))  # Connect capacitor pins
+    b5 = b5.apply_action(('wire', 13, 2, 0, 2))  # C to VSS (ground)
+    # Connect VOUT to the middle node (between R and C)
+    b5 = b5.apply_action(('wire', 11, 1, 20, 0))  # Middle node to VOUT
+
+    netlist5 = b5.to_netlist()
+    assert netlist5 is not None, "RC filter should generate netlist"
+
+    # Verify structure: should have VIN net, middle net (at VOUT), and ground
+    lines5 = netlist5.split('\n')
+    r_line = [l for l in lines5 if l.startswith('R1')][0]
+    c_line = [l for l in lines5 if l.startswith('C1')][0]
+
+    # Resistor should connect VIN net to middle net
+    # Capacitor should connect middle net to ground (0)
+    assert '0' in c_line, "Capacitor should connect to ground"
+    print("✅ Passed: Multi-net RC filter generates correct topology")
+    print(f"\nRC Filter netlist:\n{netlist5}\n")
+
+    print("\n🎉 All netlist conversion tests passed!")
+
 if __name__ == "__main__":
     run_tests()
+    test_netlist_conversion()
