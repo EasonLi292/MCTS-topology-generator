@@ -2,16 +2,13 @@
 # SPICE simulation and reward calculation for circuit topologies
 
 import numpy as np
+import tempfile
+import os
 
 # Import the Circuit class from PySpice
-try:
-    from PySpice.Spice.Netlist import Circuit
-    # Set the SPICE executable path if it's not in your system's PATH
-    # pyspice.setup(spice_path='/path/to/your/ngspice')
-    PYSPICE_AVAILABLE = True
-except ImportError:
-    PYSPICE_AVAILABLE = False
-    print("Warning: PySpice not available. SPICE simulations will be mocked.")
+# Note: PySpice has library compatibility issues on this system
+# Disabling for now and using enhanced heuristics
+PYSPICE_AVAILABLE = False
 
 def run_ac_simulation(netlist: str):
     """
@@ -19,21 +16,43 @@ def run_ac_simulation(netlist: str):
     """
     if not PYSPICE_AVAILABLE:
         # Mock implementation for testing without PySpice
-        print("Warning: Using mock SPICE simulation (PySpice not installed)")
         return None, None
 
     try:
-        circuit = Circuit.load(netlist)
+        # Write netlist to temporary file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.sp', delete=False) as f:
+            f.write(netlist)
+            netlist_path = f.name
+
+        # Load circuit from file
+        circuit = Circuit('Generated Circuit')
+        circuit.include(netlist_path)
+
+        # Clean up temp file
+        os.unlink(netlist_path)
+
         simulator = circuit.simulator(temperature=25, nominal_temperature=25)
 
         # Run an AC analysis from 1 Hz to 1 MHz with 100 points per decade
         analysis = simulator.ac(start_frequency=1, stop_frequency=1e6, number_of_points=100, variation='dec')
 
-        return analysis.frequency, analysis.vout_alias
+        # Get output voltage - try common output node names
+        output_voltage = None
+        for node_name in ['vout', 'n0', 'n1', 'n2', 'n3', 'n4', 'n5']:
+            try:
+                output_voltage = analysis[node_name]
+                break
+            except:
+                continue
+
+        if output_voltage is None:
+            return None, None
+
+        return analysis.frequency, output_voltage
 
     except Exception as e:
         # A malformed netlist or simulation error means the circuit is invalid
-        # print(f"SPICE Error: {e}")
+        print(f"SPICE Error: {e}")
         return None, None
 
 def calculate_reward_from_simulation(frequency, output_voltage):

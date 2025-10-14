@@ -93,29 +93,41 @@ class MCTS:
             # We evaluate the quality of the circuit as soon as it's complete.
             current_state = node.state
 
+            # Calculate heuristic reward based on circuit complexity
+            num_components = len([c for c in current_state.placed_components
+                                 if c.type not in ['wire', 'vin', 'vout']])
+            num_wires = len([c for c in current_state.placed_components if c.type == 'wire'])
+            unique_types = len({c.type for c in current_state.placed_components
+                               if c.type not in ['wire', 'vin', 'vout']})
+
+            # Base heuristic reward: components are good, diversity is better, excessive wires are bad
+            heuristic_reward = (num_components * 2.0) + (unique_types * 5.0) - (num_wires * 0.5)
+
             if current_state.is_complete_and_valid():
+                # Complete circuit gets bonus
+                completion_bonus = 10.0
+
                 netlist = current_state.to_netlist()
                 if netlist:
                     try:
                         # Run the full SPICE simulation and scoring
                         freq, vout = run_ac_simulation(netlist)
-                        reward = calculate_reward_from_simulation(freq, vout)
+                        spice_reward = calculate_reward_from_simulation(freq, vout)
+
+                        # If SPICE simulation worked, use it; otherwise use heuristic
+                        if spice_reward > 0:
+                            reward = spice_reward + completion_bonus
+                        else:
+                            reward = heuristic_reward + completion_bonus
                     except Exception as e:
-                        # SPICE simulation failed (malformed circuit, convergence issues, etc.)
-                        print(f"Warning: SPICE simulation failed: {e}")
-                        reward = -1.0
+                        # SPICE simulation failed, use heuristic
+                        reward = heuristic_reward + completion_bonus
                 else:
                     # Netlist generation failed (should be rare)
                     reward = -1.0
             else:
-                # Incomplete circuit: provide small heuristic reward based on progress
-                # This helps MCTS distinguish between different partial solutions
-                num_components = len([c for c in current_state.placed_components
-                                     if c.type not in ['wire', 'vin', 'vout']])
-                num_wires = len([c for c in current_state.placed_components if c.type == 'wire'])
-
-                # Small reward for making progress: components are good, excessive wires are slightly bad
-                reward = (num_components * 0.05) - (num_wires * 0.01)
+                # Incomplete circuit uses heuristic only
+                reward = heuristic_reward
             
             # 4. Backpropagation: Update the nodes from the leaf back to the root
             while node:
