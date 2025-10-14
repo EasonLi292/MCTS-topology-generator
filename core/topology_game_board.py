@@ -238,26 +238,75 @@ class Breadboard:
         """
         Converts the breadboard circuit to a SPICE netlist format.
         Returns None if the circuit is not complete and valid.
+
+        Strategy: Build a connectivity graph where component pins get unique nets,
+        then merge nets connected by wires. This prevents components in different
+        columns from incorrectly sharing nets due to row-level union-find.
         """
         if not self.is_complete_and_valid():
             return None
 
-        # Build a mapping from rows to net names
-        row_to_net: Dict[int, str] = {}
+        # Build connectivity graph: each position starts with its own net
+        position_to_net: Dict[Tuple[int, int], str] = {}
         net_counter = 0
 
-        # Assign net names to each row based on union-find structure
-        for row in range(self.ROWS):
-            root = self.find(row)
-            if root not in row_to_net:
-                # Special names for power rails
-                if row == self.VSS_ROW or root == self.find(self.VSS_ROW):
-                    row_to_net[root] = "0"  # Ground (VSS)
-                elif row == self.VDD_ROW or root == self.find(self.VDD_ROW):
-                    row_to_net[root] = "VDD"
+        # First pass: Assign initial net names to all positions (components + wire endpoints)
+        all_positions: Set[Tuple[int, int]] = set()
+
+        for comp in self.placed_components:
+            for pin in comp.pins:
+                all_positions.add(pin)
+
+        for pos in sorted(all_positions):
+            row, col = pos
+
+            # Special handling for power rails - only if position is ON the power rail row
+            if row == self.VSS_ROW:
+                position_to_net[pos] = "0"  # Ground
+            elif row == self.VDD_ROW:
+                position_to_net[pos] = "VDD"
+            else:
+                # Each position gets a unique net initially
+                position_to_net[pos] = f"n{net_counter}"
+                net_counter += 1
+
+        # Second pass: Merge nets connected by wires
+        # Build list of wire connections
+        wire_connections: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
+        for comp in self.placed_components:
+            if comp.type == 'wire' and len(comp.pins) == 2:
+                wire_connections.append((comp.pins[0], comp.pins[1]))
+
+        # Merge nets using union-find on net names
+        net_parent: Dict[str, str] = {}
+
+        def find_net(net: str) -> str:
+            if net not in net_parent:
+                net_parent[net] = net
+                return net
+            if net_parent[net] != net:
+                net_parent[net] = find_net(net_parent[net])
+            return net_parent[net]
+
+        def union_nets(net1: str, net2: str):
+            root1, root2 = find_net(net1), find_net(net2)
+            if root1 != root2:
+                #  Prefer keeping special nets (0, VDD)
+                if root1 in ["0", "VDD"]:
+                    net_parent[root2] = root1
+                elif root2 in ["0", "VDD"]:
+                    net_parent[root1] = root2
                 else:
-                    row_to_net[root] = f"n{net_counter}"
-                    net_counter += 1
+                    net_parent[root2] = root1
+
+        # Apply wire connections
+        for pin1, pin2 in wire_connections:
+            if pin1 in position_to_net and pin2 in position_to_net:
+                union_nets(position_to_net[pin1], position_to_net[pin2])
+
+        # Apply net merges to get final net names
+        for pin in position_to_net:
+            position_to_net[pin] = find_net(position_to_net[pin])
 
         # Build the netlist
         lines = []
@@ -272,8 +321,8 @@ class Breadboard:
         # Add input signal source (vin)
         vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
         if vin_comp:
-            vin_row = vin_comp.pins[0][0]
-            vin_net = row_to_net[self.find(vin_row)]
+            vin_pos = vin_comp.pins[0]
+            vin_net = position_to_net[vin_pos]
             lines.append("* Input signal")
             lines.append(f"VIN {vin_net} 0 AC 1V")
             lines.append("")
@@ -294,7 +343,7 @@ class Breadboard:
             comp_id = f"{comp_prefix}{comp_counters[comp.type]}"
 
             # Get net names for each pin
-            pin_nets = [row_to_net[self.find(pin[0])] for pin in comp.pins]
+            pin_nets = [position_to_net[pin] for pin in comp.pins]
 
             # Generate SPICE line based on component type
             if comp.type == 'resistor':
@@ -323,8 +372,8 @@ class Breadboard:
         # Add output probe (vout)
         vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
         if vout_comp:
-            vout_row = vout_comp.pins[0][0]
-            vout_net = row_to_net[self.find(vout_row)]
+            vout_pos = vout_comp.pins[0]
+            vout_net = position_to_net[vout_pos]
             lines.append("* Output probe")
             lines.append(f".print ac v({vout_net})")
             lines.append("")
