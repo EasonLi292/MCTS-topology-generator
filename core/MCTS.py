@@ -74,9 +74,14 @@ class MCTS:
         Runs the MCTS algorithm for a specified number of iterations using
         PySPICE to evaluate terminal states instead of random rollouts.
         """
+        # Track statistics
+        spice_success_count = 0
+        spice_fail_count = 0
+        max_reward_seen = 0.0
+
         for i in range(iterations):
             if (i % 1000 == 0):
-                print(f"Running iteration {i}/{iterations}...")
+                print(f"Running iteration {i}/{iterations}... (SPICE: {spice_success_count} success, {spice_fail_count} fail, max reward: {max_reward_seen:.2f})")
 
             node = self.root
 
@@ -94,19 +99,18 @@ class MCTS:
             current_state = node.state
 
             # Calculate heuristic reward based on circuit complexity
+            # This encourages exploration toward circuits with diverse components
             num_components = len([c for c in current_state.placed_components
                                  if c.type not in ['wire', 'vin', 'vout']])
             num_wires = len([c for c in current_state.placed_components if c.type == 'wire'])
             unique_types = len({c.type for c in current_state.placed_components
                                if c.type not in ['wire', 'vin', 'vout']})
 
-            # Base heuristic reward: components are good, diversity is better, excessive wires are bad
-            heuristic_reward = (num_components * 2.0) + (unique_types * 5.0) - (num_wires * 0.5)
+            # Small heuristic reward for incomplete circuits to guide exploration
+            # Component diversity is key: 1.0 per component, 3.0 per unique type
+            heuristic_reward = (num_components * 1.0) + (unique_types * 3.0) - (num_wires * 0.3)
 
             if current_state.is_complete_and_valid():
-                # Complete circuit gets bonus
-                completion_bonus = 10.0
-
                 netlist = current_state.to_netlist()
                 if netlist:
                     try:
@@ -114,19 +118,28 @@ class MCTS:
                         freq, vout = run_ac_simulation(netlist)
                         spice_reward = calculate_reward_from_simulation(freq, vout)
 
-                        # If SPICE simulation worked, use it; otherwise use heuristic
+                        # SPICE results are MOST IMPORTANT - they dominate the reward
                         if spice_reward > 0:
-                            reward = spice_reward + completion_bonus
+                            # Use SPICE reward with large multiplier + small heuristic bonus
+                            # This ensures SPICE-validated circuits are heavily preferred
+                            reward = (spice_reward * 10.0) + (unique_types * 2.0) + (num_components * 0.5)
+                            spice_success_count += 1
+                            if reward > max_reward_seen:
+                                max_reward_seen = reward
                         else:
-                            reward = heuristic_reward + completion_bonus
+                            # SPICE failed or returned 0 - heavily penalize invalid circuits
+                            # Give tiny reward to distinguish from completely broken circuits
+                            reward = heuristic_reward * 0.1
+                            spice_fail_count += 1
                     except Exception as e:
-                        # SPICE simulation failed, use heuristic
-                        reward = heuristic_reward + completion_bonus
+                        # SPICE simulation crashed - heavily penalize
+                        reward = heuristic_reward * 0.1
+                        spice_fail_count += 1
                 else:
-                    # Netlist generation failed (should be rare)
+                    # Netlist generation failed - this should be very rare
                     reward = -1.0
             else:
-                # Incomplete circuit uses heuristic only
+                # Incomplete circuit uses small heuristic only to guide exploration
                 reward = heuristic_reward
             
             # 4. Backpropagation: Update the nodes from the leaf back to the root
@@ -139,15 +152,22 @@ class MCTS:
     def get_best_solution(self) -> tuple[list[tuple], float]:
         """
         Returns the best sequence of actions found during the search.
-        The "best" is defined as the path most visited from the root.
+        The "best" is defined as the path with highest average reward.
         """
         path = []
         current_node = self.root
         best_avg_reward = 0.0
 
         while current_node.children:
-            # Choose the child that was explored the most
-            best_child = max(current_node.children, key=lambda c: c.visits)
+            # Choose the child with the best average reward (wins/visits)
+            # Only consider children that have been visited enough times
+            valid_children = [c for c in current_node.children if c.visits >= 5]
+            if not valid_children:
+                # If no children have enough visits, fall back to most visited
+                best_child = max(current_node.children, key=lambda c: c.visits)
+            else:
+                # Select child with highest average reward
+                best_child = max(valid_children, key=lambda c: c.wins / c.visits if c.visits > 0 else 0)
 
             # Use the stored action instead of reconstructing it
             if best_child.action_from_parent:
