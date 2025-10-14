@@ -194,6 +194,12 @@ class Breadboard:
             self.grid[r][c] = (component, i)
             self.active_nets.add(self.find(r))
 
+        # Auto-union component pins (component pins are inherently connected)
+        if len(component.pins) > 1:
+            first_row = component.pins[0][0]
+            for pin_row, _ in component.pins[1:]:
+                self.union(first_row, pin_row)
+
         if comp_type in ['vin', 'vout']: setattr(self, f"{comp_type}_placed", True)
         return component
 
@@ -219,8 +225,9 @@ class Breadboard:
         return new_board
         
     def __hash__(self) -> int:
+        # Preserve pin order to maintain component polarity (e.g., diode orientation)
         component_tuple = tuple(sorted(
-            (c.type, tuple(sorted(c.pins))) for c in self.placed_components
+            (c.type, tuple(c.pins)) for c in self.placed_components
         ))
         return hash(component_tuple)
 
@@ -368,8 +375,9 @@ def run_tests():
     # --- Test 3: Wiring Rules and State Immutability ---
     print("\n--- Test 3: Wiring Rules & State Immutability ---")
     b1 = b0.apply_action(('resistor', 5, 1))
-    # Resistor is on rows 5-6, both should be active (but not auto-unioned)
+    # Resistor is on rows 5-6, both should be active and auto-unioned
     assert b1.is_row_active(5) and b1.is_row_active(6)
+    assert b1.find(5) == b1.find(6)  # Component pins are auto-connected
     assert len(b0.placed_components) == 2  # Original board unchanged
     assert not b0.is_row_active(6)  # Original board unchanged
     b2 = b1.apply_action(('wire', 6, 1, 10, 1))
@@ -381,8 +389,8 @@ def run_tests():
     print("\n--- Test 4: Circuit Completion and Reward ---")
     assert not b2.is_complete_and_valid()
     assert b2.get_reward() == 0.0
-    # Now need to wire the resistor pins together (5 and 6) to create a connection
-    b3 = b2.apply_action(('wire', 5, 0, 6, 1))
+    # Connect vin to resistor and resistor to vout (resistor pins are already auto-connected)
+    b3 = b2.apply_action(('wire', 5, 0, 5, 1))  # VIN to resistor
     # Then connect to vout at row 20
     b4 = b3.apply_action(('wire', 10, 1, 20, 0))
     assert b4.is_complete_and_valid(), "Circuit should be complete after connecting VIN and VOUT nets."
@@ -406,14 +414,12 @@ def test_netlist_conversion():
     # --- Test 2: Simple RC Circuit ---
     print("\n--- Test 2: Simple RC Circuit Netlist ---")
     # Build: VIN -> Resistor -> Capacitor -> VOUT
-    # Remember: components don't auto-union their pins, so we need wires to connect them
+    # Component pins are now auto-connected, only need wires between components
     b1 = Breadboard()
-    b1 = b1.apply_action(('resistor', 5, 1))  # R on rows 5-6
+    b1 = b1.apply_action(('resistor', 5, 1))  # R on rows 5-6 (pins auto-connected)
     b1 = b1.apply_action(('wire', 5, 0, 5, 1))  # Connect VIN (row 5, col 0) to R pin 1 (row 5, col 1)
-    b1 = b1.apply_action(('wire', 5, 1, 6, 1))  # Connect R pins (row 5-6 at col 1)
-    b1 = b1.apply_action(('capacitor', 7, 2))  # C on rows 7-8
+    b1 = b1.apply_action(('capacitor', 7, 2))  # C on rows 7-8 (pins auto-connected)
     b1 = b1.apply_action(('wire', 6, 1, 7, 2))  # Connect R pin 2 to C pin 1
-    b1 = b1.apply_action(('wire', 7, 2, 8, 2))  # Connect C pins (row 7-8 at col 2)
     b1 = b1.apply_action(('wire', 8, 2, 20, 0))  # Connect C pin 2 to VOUT
 
     netlist = b1.to_netlist()
@@ -430,12 +436,10 @@ def test_netlist_conversion():
     # --- Test 3: Multiple Components of Same Type ---
     print("\n--- Test 3: Multiple Components of Same Type ---")
     b2 = Breadboard()
-    b2 = b2.apply_action(('resistor', 5, 1))  # R1 on rows 5-6
+    b2 = b2.apply_action(('resistor', 5, 1))  # R1 on rows 5-6 (pins auto-connected)
     b2 = b2.apply_action(('wire', 5, 0, 5, 1))  # Connect VIN to R1
-    b2 = b2.apply_action(('wire', 5, 1, 6, 1))  # Connect R1 pins
-    b2 = b2.apply_action(('resistor', 7, 2))  # R2 on rows 7-8
+    b2 = b2.apply_action(('resistor', 7, 2))  # R2 on rows 7-8 (pins auto-connected)
     b2 = b2.apply_action(('wire', 6, 1, 7, 2))  # Connect R1 to R2
-    b2 = b2.apply_action(('wire', 7, 2, 8, 2))  # Connect R2 pins
     b2 = b2.apply_action(('wire', 8, 2, 20, 0))  # Connect R2 to VOUT
 
     netlist2 = b2.to_netlist()
@@ -450,9 +454,8 @@ def test_netlist_conversion():
     # --- Test 4: Net Naming and Connectivity ---
     print("\n--- Test 4: Net Naming and Connectivity ---")
     b3 = Breadboard()
-    b3 = b3.apply_action(('resistor', 5, 1))
+    b3 = b3.apply_action(('resistor', 5, 1))  # Resistor pins auto-connected
     b3 = b3.apply_action(('wire', 5, 0, 5, 1))
-    b3 = b3.apply_action(('wire', 5, 1, 6, 1))  # Connect resistor pins
     b3 = b3.apply_action(('wire', 6, 1, 20, 0))
 
     netlist3 = b3.to_netlist()
@@ -467,9 +470,8 @@ def test_netlist_conversion():
     # --- Test 5: Transistor Component ---
     print("\n--- Test 5: Transistor Component (NMOS) ---")
     b4 = Breadboard()
-    b4 = b4.apply_action(('nmos3', 5, 1))  # NMOS on rows 5-6-7 (drain, gate, source)
+    b4 = b4.apply_action(('nmos3', 5, 1))  # NMOS on rows 5-6-7 (drain, gate, source - pins auto-connected)
     b4 = b4.apply_action(('wire', 5, 0, 5, 1))  # VIN to drain
-    b4 = b4.apply_action(('wire', 5, 1, 7, 1))  # Connect drain to source through transistor
     b4 = b4.apply_action(('wire', 7, 1, 20, 0))  # source to VOUT
 
     netlist4 = b4.to_netlist()
@@ -478,18 +480,16 @@ def test_netlist_conversion():
     assert "NMOS_MODEL" in netlist4, "Should reference NMOS model"
     print("✅ Passed: Transistor component handled correctly")
 
-    # --- Test 6: Proper Multi-Net Circuit ---
+    # --- Test 6: Proper Multi-Net RC Low-Pass Filter ---
     print("\n--- Test 6: Proper Multi-Net RC Low-Pass Filter ---")
     # Build a proper RC low-pass filter: VIN --R-- net1 --C-- GND, VOUT at net1
     b5 = Breadboard()
     # Place resistor between input and middle node
-    b5 = b5.apply_action(('resistor', 10, 1))  # R on rows 10-11
+    b5 = b5.apply_action(('resistor', 10, 1))  # R on rows 10-11 (pins auto-connected)
     b5 = b5.apply_action(('wire', 5, 0, 10, 1))  # VIN to R input
-    b5 = b5.apply_action(('wire', 10, 1, 11, 1))  # Connect resistor pins
     # Place capacitor from middle node to ground
-    b5 = b5.apply_action(('capacitor', 12, 2))  # C on rows 12-13
+    b5 = b5.apply_action(('capacitor', 12, 2))  # C on rows 12-13 (pins auto-connected)
     b5 = b5.apply_action(('wire', 11, 1, 12, 2))  # R output to C input
-    b5 = b5.apply_action(('wire', 12, 2, 13, 2))  # Connect capacitor pins
     b5 = b5.apply_action(('wire', 13, 2, 0, 2))  # C to VSS (ground)
     # Connect VOUT to the middle node (between R and C)
     b5 = b5.apply_action(('wire', 11, 1, 20, 0))  # Middle node to VOUT
