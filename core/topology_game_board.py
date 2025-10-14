@@ -75,12 +75,20 @@ class Breadboard:
         root1 = self.find(row1)
         root2 = self.find(row2)
         if root1 != root2:
-            if root1 in self.active_nets and root2 not in self.active_nets:
+            # Merge roots and maintain active_nets consistency
+            if root1 in self.active_nets and root2 in self.active_nets:
+                # Both active: merge root2 into root1, remove stale root2
                 self.uf_parent[root2] = root1
-            else:
+                self.active_nets.discard(root2)
+            elif root1 in self.active_nets:
+                # Only root1 active: make root1 the parent
+                self.uf_parent[root2] = root1
+            elif root2 in self.active_nets:
+                # Only root2 active: make root2 the parent
                 self.uf_parent[root1] = root2
-                if root1 in self.active_nets:
-                    self.active_nets.add(root2)
+            else:
+                # Neither active: arbitrary choice
+                self.uf_parent[root2] = root1
 
     def is_empty(self, row: int, col: int) -> bool:
         return 0 <= row < self.ROWS and 0 <= col < self.COLUMNS and self.grid[row][col] is None
@@ -104,8 +112,15 @@ class Breadboard:
 
     def can_place_wire(self, r1: int, c1: int, r2: int, c2: int) -> bool:
         if r1 == r2: return False
+        # Check bounds
+        if not (0 <= r1 < self.ROWS and 0 <= c1 < self.COLUMNS):
+            return False
+        if not (0 <= r2 < self.ROWS and 0 <= c2 < self.COLUMNS):
+            return False
+        # Check for duplicate wire
         wire_key = tuple(sorted(((r1, c1), (r2, c2))))
         if wire_key in self.placed_wires: return False
+        # At least one endpoint must be on an active net
         return self.is_row_active(r1) or self.is_row_active(r2)
 
     def is_complete_and_valid(self) -> bool:
@@ -174,21 +189,11 @@ class Breadboard:
         )
         self.placed_components.append(component)
 
-        # *** START OF FIX ***
-        pin_rows = [p[0] for p in component.pins]
-
         # Occupy grid and activate nets for all pins
         for i, (r, c) in enumerate(component.pins):
             self.grid[r][c] = (component, i)
             self.active_nets.add(self.find(r))
-        
-        # **CRITICAL:** Union all rows connected by the component into a single net
-        if len(pin_rows) > 1:
-            first_row = pin_rows[0]
-            for i in range(1, len(pin_rows)):
-                self.union(first_row, pin_rows[i])
-        # *** END OF FIX ***
-        
+
         if comp_type in ['vin', 'vout']: setattr(self, f"{comp_type}_placed", True)
         return component
 
@@ -252,11 +257,12 @@ def run_tests():
     # --- Test 3: Wiring Rules and State Immutability ---
     print("\n--- Test 3: Wiring Rules & State Immutability ---")
     b1 = b0.apply_action(('resistor', 5, 1))
-    assert b1.is_row_active(6)
-    assert len(b0.placed_components) == 2
-    assert not b0.is_row_active(6)
+    # Resistor is on rows 5-6, both should be active (but not auto-unioned)
+    assert b1.is_row_active(5) and b1.is_row_active(6)
+    assert len(b0.placed_components) == 2  # Original board unchanged
+    assert not b0.is_row_active(6)  # Original board unchanged
     b2 = b1.apply_action(('wire', 6, 1, 10, 1))
-    assert b2.find(6) == b2.find(10)
+    assert b2.find(6) == b2.find(10)  # Wire unions rows 6 and 10
     assert b2.is_row_active(10)
     print("✅ Passed: Wiring rules and state immutability are correct.")
 
@@ -264,9 +270,12 @@ def run_tests():
     print("\n--- Test 4: Circuit Completion and Reward ---")
     assert not b2.is_complete_and_valid()
     assert b2.get_reward() == 0.0
-    b3 = b2.apply_action(('wire', 10, 1, 20, 0))
-    assert b3.is_complete_and_valid(), "Circuit should be complete after connecting VIN and VOUT nets."
-    assert b3.get_reward() > 0.0
+    # Now need to wire the resistor pins together (5 and 6) to create a connection
+    b3 = b2.apply_action(('wire', 5, 0, 6, 1))
+    # Then connect to vout at row 20
+    b4 = b3.apply_action(('wire', 10, 1, 20, 0))
+    assert b4.is_complete_and_valid(), "Circuit should be complete after connecting VIN and VOUT nets."
+    assert b4.get_reward() > 0.0
     print("✅ Passed: Circuit completion and reward logic are working.")
 
     print("\n🎉 All simple checks passed!")
