@@ -5,51 +5,104 @@ import numpy as np
 import tempfile
 import os
 
+# Set library path for ngspice before importing PySpice
+os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LIBRARY_PATH', '')
+
 # Import the Circuit class from PySpice
-# Note: PySpice has library compatibility issues on this system
-# Disabling for now and using enhanced heuristics
-PYSPICE_AVAILABLE = False
+try:
+    from PySpice.Spice.Netlist import Circuit
+    from PySpice.Spice.NgSpice.Shared import NgSpiceShared
+    PYSPICE_AVAILABLE = True
+except ImportError as e:
+    PYSPICE_AVAILABLE = False
+    print(f"Warning: PySpice not available: {e}")
 
 def run_ac_simulation(netlist: str):
     """
     Runs an AC simulation on a given netlist and returns the frequency and output voltage.
+    Uses ngspice directly via subprocess for maximum compatibility.
     """
     if not PYSPICE_AVAILABLE:
         # Mock implementation for testing without PySpice
         return None, None
 
     try:
+        import subprocess
+        import re
+
         # Write netlist to temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.sp', delete=False) as f:
             f.write(netlist)
             netlist_path = f.name
 
-        # Load circuit from file
-        circuit = Circuit('Generated Circuit')
-        circuit.include(netlist_path)
+        # Run ngspice in batch mode
+        result = subprocess.run(
+            ['/opt/homebrew/bin/ngspice', '-b', netlist_path],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
 
         # Clean up temp file
         os.unlink(netlist_path)
 
-        simulator = circuit.simulator(temperature=25, nominal_temperature=25)
-
-        # Run an AC analysis from 1 Hz to 1 MHz with 100 points per decade
-        analysis = simulator.ac(start_frequency=1, stop_frequency=1e6, number_of_points=100, variation='dec')
-
-        # Get output voltage - try common output node names
-        output_voltage = None
-        for node_name in ['vout', 'n0', 'n1', 'n2', 'n3', 'n4', 'n5']:
-            try:
-                output_voltage = analysis[node_name]
-                break
-            except:
-                continue
-
-        if output_voltage is None:
+        if result.returncode != 0:
+            # Simulation failed
             return None, None
 
-        return analysis.frequency, output_voltage
+        # Parse output to extract frequency and voltage data
+        output = result.stdout
 
+        # Check for errors
+        if 'error' in output.lower() and 'incomplete or empty netlist' in output.lower():
+            return None, None
+        if 'fatal' in output.lower():
+            return None, None
+
+        # Parse the AC analysis table
+        # Format: Index frequency v(out)
+        # Example: 0	1.000000e+00	9.999605e-01,	-6.28294e-03
+        frequencies = []
+        voltages_real = []
+        voltages_imag = []
+
+        lines = output.split('\n')
+        in_data = False
+        for line in lines:
+            # Look for data section (starts after "Index   frequency")
+            if 'Index' in line and 'frequency' in line:
+                in_data = True
+                continue
+
+            if in_data and line.strip():
+                # Parse data line: Index frequency real,imag
+                parts = line.split()
+                if len(parts) >= 4:
+                    try:
+                        freq = float(parts[1])
+                        # Remove trailing comma from real part
+                        real = float(parts[2].rstrip(','))
+                        imag = float(parts[3])
+                        frequencies.append(freq)
+                        voltages_real.append(real)
+                        voltages_imag.append(imag)
+                    except (ValueError, IndexError):
+                        # Not a data line, skip
+                        continue
+
+        if len(frequencies) == 0:
+            # No valid data found
+            return None, None
+
+        # Convert to numpy arrays
+        frequencies = np.array(frequencies)
+        voltage = np.array(voltages_real) + 1j * np.array(voltages_imag)
+
+        return frequencies, voltage
+
+    except subprocess.TimeoutExpired:
+        print("SPICE Error: Simulation timeout")
+        return None, None
     except Exception as e:
         # A malformed netlist or simulation error means the circuit is invalid
         print(f"SPICE Error: {e}")
