@@ -22,7 +22,7 @@ class MCTSNode:
         # A list of actions that have not yet been explored from this node
         self.untried_actions: list[tuple] = self.state.legal_actions()
 
-    def select_child(self, exploration_constant: float = 1.41) -> 'MCTSNode':
+    def select_child(self, exploration_constant: float = 1.0) -> 'MCTSNode':
         """
         Selects the best child node using the UCT (Upper Confidence Bound for Trees) formula.
         This balances exploiting known good paths and exploring less-visited ones.
@@ -106,9 +106,9 @@ class MCTS:
             unique_types = len({c.type for c in current_state.placed_components
                                if c.type not in ['wire', 'vin', 'vout']})
 
-            # Small heuristic reward for incomplete circuits to guide exploration
-            # Component diversity is key: 1.0 per component, 3.0 per unique type
-            heuristic_reward = (num_components * 1.0) + (unique_types * 3.0) - (num_wires * 0.3)
+            # REDUCED heuristic reward for incomplete circuits to prevent premature convergence
+            # Component diversity is key but scaled down: 0.2 per component, 0.5 per unique type
+            heuristic_reward = (num_components * 0.2) + (unique_types * 0.5) - (num_wires * 0.1)
 
             if current_state.is_complete_and_valid():
                 netlist = current_state.to_netlist()
@@ -120,27 +120,32 @@ class MCTS:
 
                         # SPICE results are MOST IMPORTANT - they dominate the reward
                         if spice_reward > 0:
-                            # Use SPICE reward with large multiplier + small heuristic bonus
-                            # This ensures SPICE-validated circuits are heavily preferred
-                            reward = (spice_reward * 10.0) + (unique_types * 2.0) + (num_components * 0.5)
+                            # Progressive completion bonus: reward circuit complexity
+                            complexity_bonus = (unique_types * 5.0) + (num_components * 2.0)
+
+                            # SPICE reward now comes pre-scaled from simulator (baseline 5.0+)
+                            # Add complexity bonus to encourage diverse, multi-component circuits
+                            reward = spice_reward + complexity_bonus
                             spice_success_count += 1
                             if reward > max_reward_seen:
                                 max_reward_seen = reward
                         else:
-                            # SPICE failed or returned 0 - heavily penalize invalid circuits
-                            # Give tiny reward to distinguish from completely broken circuits
-                            reward = heuristic_reward * 0.1
+                            # SPICE failed or returned 0 - use small positive reward
+                            # Avoid negative rewards which poison the search tree
+                            reward = max(0.01, heuristic_reward * 0.1)
                             spice_fail_count += 1
                     except Exception as e:
-                        # SPICE simulation crashed - heavily penalize
-                        reward = heuristic_reward * 0.1
+                        # SPICE simulation crashed - use small positive reward
+                        reward = max(0.01, heuristic_reward * 0.1)
                         spice_fail_count += 1
                 else:
-                    # Netlist generation failed - this should be very rare
-                    reward = -1.0
+                    # Netlist generation failed - shouldn't happen for valid circuits
+                    # Use small positive reward to avoid poisoning the tree
+                    reward = max(0.01, heuristic_reward * 0.1)
             else:
                 # Incomplete circuit uses small heuristic only to guide exploration
-                reward = heuristic_reward
+                # Ensure it's always positive to avoid tree poisoning
+                reward = max(0.0, heuristic_reward)
             
             # 4. Backpropagation: Update the nodes from the leaf back to the root
             while node:
@@ -151,32 +156,51 @@ class MCTS:
 
     def get_best_solution(self) -> tuple[list[tuple], float]:
         """
-        Returns the best sequence of actions found during the search.
-        The "best" is defined as the path with highest average reward.
+        Returns the best complete circuit found during the search.
+        Searches the entire tree for complete circuits and returns the best one.
         """
-        path = []
-        current_node = self.root
-        best_avg_reward = 0.0
+        best_path = []
+        best_reward = 0.0
 
-        while current_node.children:
-            # Choose the child with the best average reward (wins/visits)
-            # Only consider children that have been visited enough times
-            valid_children = [c for c in current_node.children if c.visits >= 5]
-            if not valid_children:
-                # If no children have enough visits, fall back to most visited
-                best_child = max(current_node.children, key=lambda c: c.visits)
-            else:
-                # Select child with highest average reward
-                best_child = max(valid_children, key=lambda c: c.wins / c.visits if c.visits > 0 else 0)
+        # Recursively search for all complete circuits
+        def find_complete_circuits(node: MCTSNode, path: list[tuple]) -> list[tuple[list[tuple], float]]:
+            circuits = []
 
-            # Use the stored action instead of reconstructing it
-            if best_child.action_from_parent:
-                path.append(best_child.action_from_parent)
+            # Check if this node represents a complete circuit
+            if node.state.is_complete_and_valid():
+                avg_reward = node.wins / node.visits if node.visits > 0 else 0
+                circuits.append((path.copy(), avg_reward))
 
-            current_node = best_child
+            # Recursively check children
+            # Lower threshold for deeper nodes since they naturally get fewer visits
+            min_visits = max(1, 5 - len(path))  # Depth 0: 5 visits, depth 1: 4 visits, depth 4+: 1 visit
+            for child in node.children:
+                if child.visits >= min_visits:
+                    child_path = path + ([child.action_from_parent] if child.action_from_parent else [])
+                    circuits.extend(find_complete_circuits(child, child_path))
 
-        # Use the average reward from MCTS statistics (what we actually optimized for)
-        if current_node.visits > 0:
-            best_avg_reward = current_node.wins / current_node.visits
+            return circuits
 
-        return path, best_avg_reward
+        # Find all complete circuits
+        all_circuits = find_complete_circuits(self.root, [])
+
+        if all_circuits:
+            # Select the circuit with highest average reward
+            best_path, best_reward = max(all_circuits, key=lambda x: x[1])
+        else:
+            # Fallback to greedy selection if no complete circuits found
+            current_node = self.root
+            while current_node.children:
+                valid_children = [c for c in current_node.children if c.visits >= 5]
+                if not valid_children:
+                    best_child = max(current_node.children, key=lambda c: c.visits)
+                else:
+                    best_child = max(valid_children, key=lambda c: c.wins / c.visits if c.visits > 0 else 0)
+
+                if best_child.action_from_parent:
+                    best_path.append(best_child.action_from_parent)
+                current_node = best_child
+
+            best_reward = current_node.wins / current_node.visits if current_node.visits > 0 else 0.0
+
+        return best_path, best_reward

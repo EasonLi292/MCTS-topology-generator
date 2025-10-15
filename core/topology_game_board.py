@@ -147,11 +147,16 @@ class Breadboard:
 
     def legal_actions(self) -> List[Tuple]:
         actions: List[Tuple] = []
-        target_col = next((c for c in range(self.COLUMNS) if not all(
+        # Start from column 1 since column 0 is reserved for vin/vout
+        target_col = next((c for c in range(1, self.COLUMNS) if not all(
             not self.is_empty(r, c) for r in range(self.WORK_START_ROW, self.WORK_END_ROW + 1)
         )), -1)
         if target_col == -1:
-            if self.is_complete_and_valid(): actions.append(("STOP",))
+            # Only allow STOP if circuit is complete AND has minimum complexity
+            num_components = len([c for c in self.placed_components
+                                 if c.type not in ['wire', 'vin', 'vout']])
+            if self.is_complete_and_valid() and num_components >= 1:
+                actions.append(("STOP",))
             return actions
         for comp_type, info in COMPONENT_CATALOG.items():
             if comp_type == 'wire': continue
@@ -166,7 +171,10 @@ class Breadboard:
                 if (r1, c1) >= (r2, c2): continue
                 if self.can_place_wire(r1, c1, r2, c2):
                     actions.append(("wire", r1, c1, r2, c2))
-        if self.is_complete_and_valid():
+        # Only allow STOP if circuit is complete AND has minimum complexity
+        num_components = len([c for c in self.placed_components
+                             if c.type not in ['wire', 'vin', 'vout']])
+        if self.is_complete_and_valid() and num_components >= 1:
             actions.append(("STOP",))
         return actions
 

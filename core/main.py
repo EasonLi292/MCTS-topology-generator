@@ -15,8 +15,8 @@ def main():
     parser = argparse.ArgumentParser(description='MCTS Circuit Topology Generator')
     parser.add_argument('--iterations', type=int, default=10000,
                         help='Number of MCTS iterations to run (default: 10000)')
-    parser.add_argument('--exploration', type=float, default=1.41,
-                        help='UCT exploration constant (default: 1.41)')
+    parser.add_argument('--exploration', type=float, default=1.0,
+                        help='UCT exploration constant (default: 1.0)')
     parser.add_argument('--verbose', action='store_true',
                         help='Print verbose output')
 

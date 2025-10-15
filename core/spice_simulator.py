@@ -138,8 +138,13 @@ def calculate_reward_from_simulation(frequency, output_voltage):
     # We can use the range of the output magnitude.
     voltage_range = np.max(output_magnitude) - np.min(output_magnitude)
 
+    # **Metric 4: Baseline reward for any functional circuit**
+    # Give all working circuits a base reward to encourage completion
+    baseline_reward = 5.0
+
     # Combine metrics for a final score
+    # SIGNIFICANTLY increased multipliers to make SPICE rewards dominate heuristics
     # The spread is the most important factor for finding filters.
-    reward = (spread * 10) + (voltage_range * 5)
+    reward = baseline_reward + (spread * 50) + (voltage_range * 25)
 
     return reward
