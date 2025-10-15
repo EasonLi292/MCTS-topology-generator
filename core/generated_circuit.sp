@@ -4,13 +4,13 @@
 VDD VDD 0 DC 5V
 
 * Input signal
-VIN n4 0 AC 1V
+VIN n0 0 AC 1V
 
 * Circuit components
-P1 0 0 0 PNP_MODEL
+I1 n2 0 1m
 
 * Output probe
-.print ac v(n4)
+.print ac v(n0)
 
 * Device models
 .model DMOD D
