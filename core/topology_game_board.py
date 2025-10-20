@@ -49,8 +49,10 @@ class Breadboard:
     COLUMNS = 8
     VSS_ROW = 0
     VDD_ROW = 29
-    WORK_START_ROW = 1
-    WORK_END_ROW = 28
+    VIN_ROW = 1
+    VOUT_ROW = 28
+    WORK_START_ROW = 2
+    WORK_END_ROW = 27
 
     def __init__(self):
         self.grid: List[List[Optional[Tuple['Component', int]]]] = [
@@ -63,8 +65,9 @@ class Breadboard:
         self.uf_parent: List[int] = list(range(self.ROWS))
         self.active_nets: Set[int] = {self.find(self.VSS_ROW), self.find(self.VDD_ROW)}
         self.placed_wires: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
-        self._place_component('vin', 5, 0)
-        self._place_component('vout', 20, 0)
+        # Place VIN and VOUT on dedicated reserved rows
+        self._place_component('vin', self.VIN_ROW, 0)
+        self._place_component('vout', self.VOUT_ROW, 0)
 
     def find(self, row: int) -> int:
         if self.uf_parent[row] != row:
@@ -155,7 +158,7 @@ class Breadboard:
             # Only allow STOP if circuit is complete AND has minimum complexity
             num_components = len([c for c in self.placed_components
                                  if c.type not in ['wire', 'vin', 'vout']])
-            if self.is_complete_and_valid() and num_components >= 1:
+            if self.is_complete_and_valid() and num_components >= 3:
                 actions.append(("STOP",))
             return actions
         for comp_type, info in COMPONENT_CATALOG.items():
@@ -174,7 +177,7 @@ class Breadboard:
         # Only allow STOP if circuit is complete AND has minimum complexity
         num_components = len([c for c in self.placed_components
                              if c.type not in ['wire', 'vin', 'vout']])
-        if self.is_complete_and_valid() and num_components >= 1:
+        if self.is_complete_and_valid() and num_components >= 3:
             actions.append(("STOP",))
         return actions
 

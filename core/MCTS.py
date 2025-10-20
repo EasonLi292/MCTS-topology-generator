@@ -68,6 +68,8 @@ class MCTS:
     """
     def __init__(self, initial_state: Breadboard):
         self.root = MCTSNode(initial_state)
+        self.best_candidate_state = None
+        self.best_candidate_reward = 0.0
 
     def search(self, iterations: int):
         """
@@ -106,11 +108,29 @@ class MCTS:
             unique_types = len({c.type for c in current_state.placed_components
                                if c.type not in ['wire', 'vin', 'vout']})
 
-            # REDUCED heuristic reward for incomplete circuits to prevent premature convergence
-            # Component diversity is key but scaled down: 0.2 per component, 0.5 per unique type
-            heuristic_reward = (num_components * 0.2) + (unique_types * 0.5) - (num_wires * 0.1)
+            # Check if vin and vout are connected (massive bonus for this!)
+            vin_row = next((c.pins[0][0] for c in current_state.placed_components if c.type == 'vin'), -1)
+            vout_row = next((c.pins[0][0] for c in current_state.placed_components if c.type == 'vout'), -1)
 
-            if current_state.is_complete_and_valid():
+            connection_bonus = 0.0
+            if vin_row != -1 and vout_row != -1:
+                if current_state.find(vin_row) == current_state.find(vout_row):
+                    # Connected! But only give bonus if there are components in the circuit
+                    # This prevents the algorithm from just wiring vin→vout directly
+                    if num_components > 0:
+                        connection_bonus = 20.0  # Reduced from 50 to balance with component rewards
+                    else:
+                        connection_bonus = 5.0  # Small bonus for empty direct connection
+                else:
+                    # Not connected yet - small penalty to encourage connection
+                    connection_bonus = -2.0
+
+            # Increased heuristic rewards to provide stronger guidance
+            # Component diversity and connection are key
+            heuristic_reward = (num_components * 5.0) + (unique_types * 8.0) + connection_bonus
+
+            # MINIMUM COMPONENT REQUIREMENT: Only evaluate circuits with at least 3 components
+            if current_state.is_complete_and_valid() and num_components >= 3:
                 netlist = current_state.to_netlist()
                 if netlist:
                     try:
@@ -147,11 +167,16 @@ class MCTS:
                 # Ensure it's always positive to avoid tree poisoning
                 reward = max(0.0, heuristic_reward)
             
+            # Track the best candidate circuit found so far
+            if reward > self.best_candidate_reward:
+                self.best_candidate_reward = reward
+                self.best_candidate_state = current_state
+
             # 4. Backpropagation: Update the nodes from the leaf back to the root
             while node:
                 node.update(reward)
                 node = node.parent
-                
+
         print("Search complete.")
 
     def get_best_solution(self) -> tuple[list[tuple], float]:
@@ -166,10 +191,13 @@ class MCTS:
         def find_complete_circuits(node: MCTSNode, path: list[tuple]) -> list[tuple[list[tuple], float]]:
             circuits = []
 
-            # Check if this node represents a complete circuit
+            # Check if this node represents a complete circuit with minimum 3 components
             if node.state.is_complete_and_valid():
-                avg_reward = node.wins / node.visits if node.visits > 0 else 0
-                circuits.append((path.copy(), avg_reward))
+                num_components = len([c for c in node.state.placed_components
+                                     if c.type not in ['wire', 'vin', 'vout']])
+                if num_components >= 3:
+                    avg_reward = node.wins / node.visits if node.visits > 0 else 0
+                    circuits.append((path.copy(), avg_reward))
 
             # Recursively check children
             # Lower threshold for deeper nodes since they naturally get fewer visits

@@ -76,6 +76,32 @@ def main():
                 f.write(netlist)
             print(f"\nNetlist saved to: {output_file}")
 
+    # Also save the best candidate found during search
+    print("\n" + "="*70)
+    print("BEST CANDIDATE CIRCUIT (highest reward during search)")
+    print("="*70)
+    if mcts.best_candidate_state:
+        best_comp_count = len([c for c in mcts.best_candidate_state.placed_components
+                               if c.type not in ['wire', 'vin', 'vout']])
+        print(f"  Components: {best_comp_count}")
+        print(f"  Complete: {mcts.best_candidate_state.is_complete_and_valid()}")
+        print(f"  Reward: {mcts.best_candidate_reward:.4f}")
+
+        # Save best candidate netlist if it's complete
+        if mcts.best_candidate_state.is_complete_and_valid():
+            candidate_netlist = mcts.best_candidate_state.to_netlist()
+            if candidate_netlist:
+                candidate_file = "best_candidate_circuit.sp"
+                with open(candidate_file, 'w') as f:
+                    f.write(candidate_netlist)
+                print(f"\nBest candidate netlist saved to: {candidate_file}")
+                print("\nBest candidate SPICE netlist:")
+                print("-" * 70)
+                print(candidate_netlist)
+                print("-" * 70)
+    else:
+        print("  No candidate circuit found")
+
     print("\n" + "="*70)
     print("Search complete!")
     print("="*70)

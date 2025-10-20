@@ -9,7 +9,7 @@ VIN n0 0 AC 1V
 * Circuit components
 
 * Output probe
-.print ac v(n3)
+.print ac v(n1)
 
 * Device models
 .model DMOD D
