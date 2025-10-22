@@ -111,6 +111,9 @@ def run_ac_simulation(netlist: str):
 def calculate_reward_from_simulation(frequency, output_voltage):
     """
     Calculates a reward score based on the AC analysis results.
+
+    SPICE rewards are designed to MASSIVELY DOMINATE heuristic rewards.
+    Any valid, interesting circuit should get 500-5000+ points.
     """
     if frequency is None or output_voltage is None:
         return 0.0  # Failed simulation
@@ -120,31 +123,60 @@ def calculate_reward_from_simulation(frequency, output_voltage):
 
     # Check for numerical instability (NaN or Inf values)
     if np.any(np.isnan(output_magnitude)) or np.any(np.isinf(output_magnitude)):
-        return -5.0  # Penalize unstable circuits
+        return 0.0  # Just return 0 for unstable circuits
 
     # **Metric 1: Avoid Trivial Shorts/Opens**
-    # Punish circuits where the output is always ~0 (open) or ~1 (short to input)
-    if np.all(output_magnitude < 1e-6) or np.all(np.isclose(output_magnitude, 1.0)):
-        return 0.01  # Give a tiny reward to distinguish from failed sims
+    # Circuits where output is always ~0 (open) or constant (boring)
+    if np.all(output_magnitude < 1e-6):
+        return 10.0  # Tiny reward - circuit simulates but does nothing
+
+    # Check if output is completely flat (boring circuit)
+    if np.std(output_magnitude) < 1e-9:
+        return 10.0  # Flat response = boring
 
     # **Metric 2: Reward Frequency Dependence** 📈
     # A circuit is "interesting" if its behavior changes with frequency.
-    # We can measure this with the standard deviation of the output magnitude.
-    # A flat response (boring) will have a low std dev. A filter (interesting) will have a high std dev.
+    # Filters, amplifiers, oscillators all show frequency dependence.
     spread = np.std(output_magnitude)
 
-    # **Metric 3: Reward Attenuation/Gain**
-    # Reward circuits where the output isn't just the input.
-    # We can use the range of the output magnitude.
+    # **Metric 3: Reward Dynamic Range**
+    # How much does the output vary across the frequency sweep?
     voltage_range = np.max(output_magnitude) - np.min(output_magnitude)
 
-    # **Metric 4: Baseline reward for any functional circuit**
-    # Give all working circuits a base reward to encourage completion
-    baseline_reward = 5.0
+    # **Metric 4: Reward Non-Monotonic Behavior**
+    # Circuits with peaks/valleys are more interesting than simple slopes
+    # Count direction changes in the magnitude
+    diff = np.diff(output_magnitude)
+    sign_changes = np.sum(np.diff(np.sign(diff)) != 0)
+    non_monotonic_bonus = sign_changes * 20.0  # Reward peaks and valleys
 
-    # Combine metrics for a final score
-    # SIGNIFICANTLY increased multipliers to make SPICE rewards dominate heuristics
-    # The spread is the most important factor for finding filters.
-    reward = baseline_reward + (spread * 50) + (voltage_range * 25)
+    # **Metric 5: Reward Signal Presence**
+    # Any output signal at all is valuable
+    mean_output = np.mean(output_magnitude)
+    signal_presence_bonus = mean_output * 100.0
 
-    return reward
+    # **Metric 6: MASSIVE baseline for any working circuit**
+    # This ensures SPICE circuits always dominate heuristics
+    baseline_reward = 100.0
+
+    # **CRITICAL: Make SPICE rewards DOMINATE everything**
+    # Typical heuristic rewards: 20-60 points
+    # SPICE rewards should be: 500-5000+ points for interesting circuits
+
+    # Spread is THE MOST IMPORTANT - filters have high spread
+    spread_reward = spread * 500.0  # 10x increase from 50
+
+    # Range also very important
+    range_reward = voltage_range * 250.0  # 10x increase from 25
+
+    # Combine all metrics
+    total_reward = (baseline_reward +
+                   spread_reward +
+                   range_reward +
+                   non_monotonic_bonus +
+                   signal_presence_bonus)
+
+    # Ensure minimum reward for any circuit that simulates
+    total_reward = max(total_reward, 100.0)
+
+    return total_reward

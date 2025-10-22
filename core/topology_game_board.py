@@ -124,13 +124,122 @@ class Breadboard:
         wire_key = tuple(sorted(((r1, c1), (r2, c2))))
         if wire_key in self.placed_wires: return False
         # At least one endpoint must be on an active net
-        return self.is_row_active(r1) or self.is_row_active(r2)
+        if not (self.is_row_active(r1) or self.is_row_active(r2)):
+            return False
+
+        # CRITICAL RULE: Prevent wires from connecting VDD/VSS to gate/base pins
+        # Check if either endpoint is a gate or base pin
+        for row, col in [(r1, c1), (r2, c2)]:
+            cell = self.grid[row][col]
+            if cell is not None:
+                component, pin_index = cell
+                # Check if this is a gate pin (MOSFET pin 1)
+                if component.type in ['nmos3', 'pmos3'] and pin_index == 1:
+                    # This is a gate pin - check if the other endpoint is VDD/VSS
+                    other_row = r2 if row == r1 else r1
+                    if other_row == self.VDD_ROW or other_row == self.VSS_ROW:
+                        return False  # Cannot wire gate to power rail
+                # Check if this is a base pin (BJT pin 1)
+                elif component.type in ['npn', 'pnp'] and pin_index == 1:
+                    # This is a base pin - check if the other endpoint is VDD/VSS
+                    other_row = r2 if row == r1 else r1
+                    if other_row == self.VDD_ROW or other_row == self.VSS_ROW:
+                        return False  # Cannot wire base to power rail
+
+        return True
 
     def is_complete_and_valid(self) -> bool:
-        if not (self.vin_placed and self.vout_placed): return False
+        """
+        Checks if the circuit is complete and valid for simulation.
+
+        Requirements:
+        1. VIN and VOUT must be placed
+        2. VIN and VOUT must be electrically connected
+        3. All components must be connected (no floating parts)
+        4. Gate/Base pins must not be directly connected to VDD/VSS
+        """
+        if not (self.vin_placed and self.vout_placed):
+            return False
+
         vin_row = next((c.pins[0][0] for c in self.placed_components if c.type == 'vin'), -1)
         vout_row = next((c.pins[0][0] for c in self.placed_components if c.type == 'vout'), -1)
-        return vin_row != -1 and self.find(vin_row) == self.find(vout_row)
+
+        # Check VIN-VOUT connectivity
+        if vin_row == -1 or self.find(vin_row) != self.find(vout_row):
+            return False
+
+        # Check for floating components
+        if not self._all_components_connected():
+            return False
+
+        # Check gate/base pins are not connected to power rails
+        if not self._validate_gate_base_connections():
+            return False
+
+        return True
+
+    def _all_components_connected(self) -> bool:
+        """
+        Verify that all component pins are part of the main circuit.
+        No floating/disconnected components allowed.
+
+        Returns:
+            True if all components are connected to the VIN-VOUT path
+        """
+        if not self.vin_placed or not self.vout_placed:
+            return False
+
+        # Get the main net (VIN-VOUT connection)
+        vin_row = next((c.pins[0][0] for c in self.placed_components if c.type == 'vin'), -1)
+        main_net = self.find(vin_row)
+
+        # Check every non-wire component
+        for comp in self.placed_components:
+            if comp.type in ['vin', 'vout', 'wire']:
+                continue
+
+            # At least one pin must be connected to the main net
+            component_connected = False
+            for pin_row, pin_col in comp.pins:
+                if self.find(pin_row) == main_net:
+                    component_connected = True
+                    break
+
+            if not component_connected:
+                return False  # Found a floating component
+
+        return True
+
+    def _validate_gate_base_connections(self) -> bool:
+        """
+        Ensure gate (MOSFET) and base (BJT) pins are not directly placed on
+        VDD or VSS power rail rows.
+
+        This prevents direct shorts but allows gates/bases to be in circuits
+        that have other components connected to power rails.
+
+        Gate = pin 1 (index 1) for NMOS/PMOS
+        Base = pin 1 (index 1) for NPN/PNP
+
+        Returns:
+            True if all gate/base connections are valid
+        """
+        for comp in self.placed_components:
+            # Check MOSFET gate pins
+            if comp.type in ['nmos3', 'pmos3']:
+                gate_row = comp.pins[1][0]  # Gate is second pin (index 1)
+                # Gate cannot be placed directly on VDD or VSS rows
+                if gate_row == self.VDD_ROW or gate_row == self.VSS_ROW:
+                    return False
+
+            # Check BJT base pins
+            elif comp.type in ['npn', 'pnp']:
+                base_row = comp.pins[1][0]  # Base is second pin (index 1)
+                # Base cannot be placed directly on VDD or VSS rows
+                if base_row == self.VDD_ROW or base_row == self.VSS_ROW:
+                    return False
+
+        return True
 
     def apply_action(self, action: Tuple) -> "Breadboard":
         new_board = self.clone()
@@ -347,11 +456,19 @@ class Breadboard:
                 continue  # Skip markers and wires
 
             # Get component prefix and increment counter
-            comp_prefix = comp.type[0].upper()
-            if comp.type not in comp_counters:
-                comp_counters[comp.type] = 0
-            comp_counters[comp.type] += 1
-            comp_id = f"{comp_prefix}{comp_counters[comp.type]}"
+            # MOSFETs must use 'M' prefix in SPICE
+            if comp.type in ['nmos3', 'pmos3']:
+                comp_prefix = 'M'
+                # Use unified counter for all MOSFETs (they share 'M' prefix)
+                counter_key = 'mosfet'
+            else:
+                comp_prefix = comp.type[0].upper()
+                counter_key = comp.type
+
+            if counter_key not in comp_counters:
+                comp_counters[counter_key] = 0
+            comp_counters[counter_key] += 1
+            comp_id = f"{comp_prefix}{comp_counters[counter_key]}"
 
             # Get net names for each pin
             pin_nets = [position_to_net[pin] for pin in comp.pins]
@@ -366,11 +483,11 @@ class Breadboard:
             elif comp.type == 'diode':
                 lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} DMOD")
             elif comp.type == 'nmos3':
-                # NMOS: Drain Gate Source (Bulk tied to source)
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} {pin_nets[2]} NMOS_MODEL")
+                # NMOS: Drain Gate Source Bulk (Bulk tied to source)
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} {pin_nets[2]} NMOS_MODEL L=1u W=10u")
             elif comp.type == 'pmos3':
-                # PMOS: Drain Gate Source (Bulk tied to VDD)
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} VDD PMOS_MODEL")
+                # PMOS: Drain Gate Source Bulk (Bulk tied to VDD)
+                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} VDD PMOS_MODEL L=1u W=10u")
             elif comp.type == 'npn':
                 # NPN: Collector Base Emitter
                 lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} NPN_MODEL")
@@ -392,10 +509,10 @@ class Breadboard:
         # Add device models
         lines.append("* Device models")
         lines.append(".model DMOD D")
-        lines.append(".model NMOS_MODEL NMOS (LEVEL=1)")
-        lines.append(".model PMOS_MODEL PMOS (LEVEL=1)")
-        lines.append(".model NPN_MODEL NPN")
-        lines.append(".model PNP_MODEL PNP")
+        lines.append(".model NMOS_MODEL NMOS (LEVEL=1 VTO=0.7 KP=20u)")
+        lines.append(".model PMOS_MODEL PMOS (LEVEL=1 VTO=-0.7 KP=10u)")
+        lines.append(".model NPN_MODEL NPN (BF=100)")
+        lines.append(".model PNP_MODEL PNP (BF=100)")
         lines.append("")
 
         # Add simulation commands
@@ -419,22 +536,29 @@ def run_tests():
     b0 = Breadboard()
     assert b0.vin_placed and b0.vout_placed
     assert len(b0.placed_components) == 2
-    assert b0.is_row_active(5)
-    assert b0.is_row_active(20)
+    assert b0.is_row_active(b0.VIN_ROW)  # VIN at row 1
+    assert b0.is_row_active(b0.VOUT_ROW)  # VOUT at row 28
     assert not b0.is_row_active(10)
     print("✅ Passed: Initial state is correct.")
 
     # --- Test 2: Component Placement Rules ---
     print("\n--- Test 2: Component Placement Rules ---")
-    assert not b0.can_place_component('vin', 10, 1)
-    assert not b0.can_place_component('resistor', 5, 0)
-    assert b0.can_place_component('resistor', 5, 1)
-    assert not b0.can_place_component('resistor', 10, 1)
+    assert not b0.can_place_component('vin', 10, 1)  # VIN already placed
+    assert not b0.can_place_component('resistor', 5, 0)  # Column 0 reserved
+    # Note: Can't place resistor at (5,1) yet - need to wire VIN to work area first
+    # First wire VIN to a work row to activate it
+    b0_wired = b0.apply_action(('wire', b0.VIN_ROW, 0, 5, 1))
+    assert b0_wired.is_row_active(5)
+    assert b0_wired.can_place_component('resistor', 5, 1)  # Now row 5 is active
     print("✅ Passed: Component placement rules are enforced.")
 
     # --- Test 3: Wiring Rules and State Immutability ---
     print("\n--- Test 3: Wiring Rules & State Immutability ---")
-    b1 = b0.apply_action(('resistor', 5, 1))
+    # First wire VIN to row 5 to activate it
+    b1 = b0.apply_action(('wire', b0.VIN_ROW, 0, 5, 1))
+    assert b1.is_row_active(5)
+    # Now place resistor at rows 5-6
+    b1 = b1.apply_action(('resistor', 5, 1))
     # Resistor is on rows 5-6, both should be active and auto-unioned
     assert b1.is_row_active(5) and b1.is_row_active(6)
     assert b1.find(5) == b1.find(6)  # Component pins are auto-connected
@@ -450,9 +574,9 @@ def run_tests():
     assert not b2.is_complete_and_valid()
     assert b2.get_reward() == 0.0
     # Connect vin to resistor and resistor to vout (resistor pins are already auto-connected)
-    b3 = b2.apply_action(('wire', 5, 0, 5, 1))  # VIN to resistor
-    # Then connect to vout at row 20
-    b4 = b3.apply_action(('wire', 10, 1, 20, 0))
+    b3 = b2.apply_action(('wire', b0.VIN_ROW, 0, 5, 1))  # VIN (row 1) to resistor
+    # Then connect to vout at row 28
+    b4 = b3.apply_action(('wire', 10, 1, b0.VOUT_ROW, 0))  # Connect to VOUT (row 28)
     assert b4.is_complete_and_valid(), "Circuit should be complete after connecting VIN and VOUT nets."
     assert b4.get_reward() > 0.0
     print("✅ Passed: Circuit completion and reward logic are working.")
@@ -477,10 +601,10 @@ def test_netlist_conversion():
     # Component pins are now auto-connected, only need wires between components
     b1 = Breadboard()
     b1 = b1.apply_action(('resistor', 5, 1))  # R on rows 5-6 (pins auto-connected)
-    b1 = b1.apply_action(('wire', 5, 0, 5, 1))  # Connect VIN (row 5, col 0) to R pin 1 (row 5, col 1)
+    b1 = b1.apply_action(('wire', b1.VIN_ROW, 0, 5, 1))  # Connect VIN (row 1) to R pin 1
     b1 = b1.apply_action(('capacitor', 7, 2))  # C on rows 7-8 (pins auto-connected)
     b1 = b1.apply_action(('wire', 6, 1, 7, 2))  # Connect R pin 2 to C pin 1
-    b1 = b1.apply_action(('wire', 8, 2, 20, 0))  # Connect C pin 2 to VOUT
+    b1 = b1.apply_action(('wire', 8, 2, b1.VOUT_ROW, 0))  # Connect C pin 2 to VOUT (row 28)
 
     netlist = b1.to_netlist()
     assert netlist is not None, "Complete circuit should return a netlist"
@@ -497,10 +621,10 @@ def test_netlist_conversion():
     print("\n--- Test 3: Multiple Components of Same Type ---")
     b2 = Breadboard()
     b2 = b2.apply_action(('resistor', 5, 1))  # R1 on rows 5-6 (pins auto-connected)
-    b2 = b2.apply_action(('wire', 5, 0, 5, 1))  # Connect VIN to R1
+    b2 = b2.apply_action(('wire', b2.VIN_ROW, 0, 5, 1))  # Connect VIN to R1
     b2 = b2.apply_action(('resistor', 7, 2))  # R2 on rows 7-8 (pins auto-connected)
     b2 = b2.apply_action(('wire', 6, 1, 7, 2))  # Connect R1 to R2
-    b2 = b2.apply_action(('wire', 8, 2, 20, 0))  # Connect R2 to VOUT
+    b2 = b2.apply_action(('wire', 8, 2, b2.VOUT_ROW, 0))  # Connect R2 to VOUT
 
     netlist2 = b2.to_netlist()
     assert netlist2 is not None
@@ -515,8 +639,8 @@ def test_netlist_conversion():
     print("\n--- Test 4: Net Naming and Connectivity ---")
     b3 = Breadboard()
     b3 = b3.apply_action(('resistor', 5, 1))  # Resistor pins auto-connected
-    b3 = b3.apply_action(('wire', 5, 0, 5, 1))
-    b3 = b3.apply_action(('wire', 6, 1, 20, 0))
+    b3 = b3.apply_action(('wire', b3.VIN_ROW, 0, 5, 1))
+    b3 = b3.apply_action(('wire', 6, 1, b3.VOUT_ROW, 0))
 
     netlist3 = b3.to_netlist()
     assert netlist3 is not None
@@ -531,8 +655,8 @@ def test_netlist_conversion():
     print("\n--- Test 5: Transistor Component (NMOS) ---")
     b4 = Breadboard()
     b4 = b4.apply_action(('nmos3', 5, 1))  # NMOS on rows 5-6-7 (drain, gate, source - pins auto-connected)
-    b4 = b4.apply_action(('wire', 5, 0, 5, 1))  # VIN to drain
-    b4 = b4.apply_action(('wire', 7, 1, 20, 0))  # source to VOUT
+    b4 = b4.apply_action(('wire', b4.VIN_ROW, 0, 5, 1))  # VIN to drain
+    b4 = b4.apply_action(('wire', 7, 1, b4.VOUT_ROW, 0))  # source to VOUT
 
     netlist4 = b4.to_netlist()
     assert netlist4 is not None
@@ -544,15 +668,16 @@ def test_netlist_conversion():
     print("\n--- Test 6: Proper Multi-Net RC Low-Pass Filter ---")
     # Build a proper RC low-pass filter: VIN --R-- net1 --C-- GND, VOUT at net1
     b5 = Breadboard()
+    # First wire VIN to work area
+    b5 = b5.apply_action(('wire', b5.VIN_ROW, 0, 10, 1))  # Activate row 10
     # Place resistor between input and middle node
     b5 = b5.apply_action(('resistor', 10, 1))  # R on rows 10-11 (pins auto-connected)
-    b5 = b5.apply_action(('wire', 5, 0, 10, 1))  # VIN to R input
     # Place capacitor from middle node to ground
     b5 = b5.apply_action(('capacitor', 12, 2))  # C on rows 12-13 (pins auto-connected)
     b5 = b5.apply_action(('wire', 11, 1, 12, 2))  # R output to C input
     b5 = b5.apply_action(('wire', 13, 2, 0, 2))  # C to VSS (ground)
     # Connect VOUT to the middle node (between R and C)
-    b5 = b5.apply_action(('wire', 11, 1, 20, 0))  # Middle node to VOUT
+    b5 = b5.apply_action(('wire', 11, 1, b5.VOUT_ROW, 0))  # Middle node to VOUT
 
     netlist5 = b5.to_netlist()
     assert netlist5 is not None, "RC filter should generate netlist"
