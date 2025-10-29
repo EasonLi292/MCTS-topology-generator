@@ -120,8 +120,7 @@ def analyze_circuit(board):
     print(f"  Gate/base validation: {board._validate_gate_base_connections()}")
     print(f"  Circuit complete: {board.is_complete_and_valid()}")
 
-    # Calculate heuristic reward (import sys; sys.path.append("../core")
-from MCTS.py logic)
+    # Calculate heuristic reward (using MCTS.py logic)
     if board.find(vin_row) == board.find(vout_row):
         if num_components > 0:
             connection_bonus = 20.0
