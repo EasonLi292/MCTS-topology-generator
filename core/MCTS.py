@@ -219,7 +219,9 @@ class MCTS:
             return self._evaluate_with_spice(state, metrics, heuristic_reward, stats)
         else:
             # Incomplete circuit: use heuristic only (always positive)
-            return max(0.0, heuristic_reward)
+            # IMPORTANT: Cap at 49.0 to ensure completed circuits ALWAYS score higher
+            # Even trivial completed circuits get 50.0+, ensuring MCTS prefers completion
+            return max(0.0, min(heuristic_reward, 49.0))
 
     def _calculate_circuit_metrics(self, state: Breadboard) -> dict:
         """
@@ -325,8 +327,9 @@ class MCTS:
         """
         netlist = state.to_netlist()
         if not netlist:
-            # Netlist generation failed - use small positive reward
-            return max(0.01, heuristic_reward * 0.1)
+            # Netlist generation failed - but it's still a complete circuit
+            # Give it a baseline reward higher than any incomplete circuit
+            return 50.0
 
         try:
             # Run the full SPICE simulation and scoring
@@ -337,14 +340,16 @@ class MCTS:
                 # SPICE simulation succeeded
                 return self._calculate_final_reward(spice_reward, metrics, stats)
             else:
-                # SPICE failed or returned 0 - use small positive reward
+                # SPICE failed or returned 0 - but it's still a complete circuit
+                # Give baseline reward higher than incomplete circuits
                 stats.record_spice_failure()
-                return max(0.01, heuristic_reward * 0.1)
+                return 50.0
 
         except Exception as e:
-            # SPICE simulation crashed - use small positive reward
+            # SPICE simulation crashed - but it's still a complete circuit
+            # Give baseline reward higher than incomplete circuits
             stats.record_spice_failure()
-            return max(0.01, heuristic_reward * 0.1)
+            return 50.0
 
     def _calculate_final_reward(self, spice_reward: float, metrics: dict,
                                 stats: CircuitStatistics) -> float:
@@ -365,6 +370,9 @@ class MCTS:
         # SPICE reward now comes pre-scaled from simulator (baseline 100.0+)
         # Add complexity bonus to encourage diverse, multi-component circuits
         reward = spice_reward + complexity_bonus
+
+        # Ensure completed circuits ALWAYS score higher than incomplete (capped at 49.0)
+        reward = max(reward, 50.0)
 
         stats.record_spice_success(reward)
         return reward

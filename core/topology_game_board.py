@@ -453,12 +453,23 @@ class Breadboard:
             actions: List to append actions to
             target_col: Current target column (wires can connect up to this column)
         """
+        # Find the maximum column that has any components
+        # This ensures we can wire from all placed components, not just up to target_col
+        max_col = 0
+        for r in range(self.ROWS):
+            for c in range(self.COLUMNS):
+                if not self.is_empty(r, c):
+                    max_col = max(max_col, c)
+
+        # Use the larger of target_col and max_col to ensure all components can be wired
+        wire_col_limit = max(target_col, max_col)
+
         # Get all active positions (potential wire sources)
-        source_points = {(r, c) for c in range(target_col + 1)
+        source_points = {(r, c) for c in range(wire_col_limit + 1)
                         for r in range(self.ROWS) if self.is_row_active(r)}
 
         # Get all positions (potential wire targets)
-        target_points = {(r, c) for c in range(target_col + 1) for r in range(self.ROWS)}
+        target_points = {(r, c) for c in range(wire_col_limit + 1) for r in range(self.ROWS)}
 
         # Try all possible wire connections
         for r1, c1 in source_points:
