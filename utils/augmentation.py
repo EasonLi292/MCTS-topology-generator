@@ -72,16 +72,29 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
 
     # Translate and place each component
     for comp in board.placed_components:
-        new_pins = [(r + row_offset, c) for r, c in comp.pins]
+        # VIN and VOUT are fixed at specific rows - don't translate them
+        if comp.type in ['vin', 'vout']:
+            # Keep VIN/VOUT at their original positions
+            new_pins = comp.pins
+        elif comp.type == 'wire':
+            # For wires, translate each endpoint independently
+            # but keep VIN_ROW and VOUT_ROW fixed
+            new_pins = []
+            for r, c in comp.pins:
+                if r == board.VIN_ROW or r == board.VOUT_ROW:
+                    # Keep VIN/VOUT connection points fixed
+                    new_pins.append((r, c))
+                else:
+                    # Translate other wire endpoints
+                    new_pins.append((r + row_offset, c))
+        else:
+            # Translate all other components
+            new_pins = [(r + row_offset, c) for r, c in comp.pins]
 
         # Check if translation is valid (within bounds)
         for r, c in new_pins:
             if not (0 <= r < board.ROWS and 0 <= c < board.COLUMNS):
                 return None  # Translation out of bounds
-            # VIN/VOUT must stay in work area
-            if comp.type in ['vin', 'vout']:
-                if not (board.WORK_START_ROW <= r <= board.WORK_END_ROW):
-                    return None
 
         # Place the translated component
         if comp.type == 'wire':
