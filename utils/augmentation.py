@@ -7,6 +7,13 @@ functions to:
 1. Normalize circuits to canonical form
 2. Generate all symmetric variants
 3. Enable reward sharing across equivalent states
+
+This module follows SOLID principles:
+- Single Responsibility: Each function has one clear purpose
+- Open/Closed: Functions can be extended without modification
+- Liskov Substitution: All functions work with Breadboard interface
+- Interface Segregation: Functions have minimal, focused interfaces
+- Dependency Inversion: Functions depend on abstractions (Breadboard), not implementations
 """
 
 from typing import List, Dict, Set, Tuple, Optional

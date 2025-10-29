@@ -21,6 +21,11 @@ This is a classic CMOS inverter - when VIN is high, NMOS conducts and pulls outp
 When VIN is low, PMOS conducts and pulls output high.
 """
 
+import sys
+import os
+# Add core directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
+
 from topology_game_board import Breadboard
 from spice_simulator import run_ac_simulation, calculate_reward_from_simulation
 
@@ -115,7 +120,8 @@ def analyze_circuit(board):
     print(f"  Gate/base validation: {board._validate_gate_base_connections()}")
     print(f"  Circuit complete: {board.is_complete_and_valid()}")
 
-    # Calculate heuristic reward (from MCTS.py logic)
+    # Calculate heuristic reward (import sys; sys.path.append("../core")
+from MCTS.py logic)
     if board.find(vin_row) == board.find(vout_row):
         if num_components > 0:
             connection_bonus = 20.0

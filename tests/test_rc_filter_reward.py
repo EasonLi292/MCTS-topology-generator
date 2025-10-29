@@ -11,6 +11,11 @@ This is a classic RC low-pass filter that attenuates high frequencies.
 Should have very high frequency-dependent behavior (high spread/range).
 """
 
+import sys
+import os
+# Add core directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
+
 from topology_game_board import Breadboard
 from spice_simulator import run_ac_simulation, calculate_reward_from_simulation
 import numpy as np

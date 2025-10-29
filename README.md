@@ -118,16 +118,29 @@ Netlist saved to: generated_circuit.sp
 
 ```
 MCTS-topology-generator/
-├── core/
+├── core/                        # Core algorithm implementation
 │   ├── main.py                  # Entry point
-│   ├── MCTS.py                  # MCTS algorithm implementation
+│   ├── MCTS.py                  # MCTS algorithm (refactored with SOLID principles)
 │   ├── topology_game_board.py   # Breadboard environment & circuit rules
-│   ├── spice_simulator.py       # SPICE simulation & reward calculation
-│   └── generated_circuit.sp     # Output SPICE netlist
-├── utils/
-│   └── augmentation.py          # Circuit augmentation utilities
-└── README.md
+│   └── spice_simulator.py       # SPICE simulation & reward calculation
+├── utils/                       # Utility modules
+│   └── augmentation.py          # Circuit symmetry and augmentation
+├── tests/                       # Comprehensive test suite
+│   ├── test_mcts_fixes.py       # MCTS core functionality tests
+│   ├── test_validation_rules.py # Circuit validation tests
+│   ├── test_mcts_search.py      # Integration tests
+│   └── ...                      # Additional circuit-specific tests
+├── examples/                    # Example SPICE netlists
+│   ├── best_candidate_circuit.sp
+│   └── generated_circuit.sp
+├── docs/                        # Detailed documentation
+│   ├── ARCHITECTURE.md          # System architecture overview
+│   ├── VALIDATION_RULES_SUMMARY.md
+│   └── ...                      # Additional technical docs
+└── README.md                    # This file
 ```
+
+See [`docs/README.md`](docs/README.md) for detailed documentation.
 
 ## How It Works
 
@@ -179,13 +192,49 @@ A circuit is complete when:
 - Review `generated_circuit.sp` for malformed netlist
 - Some component configurations may be invalid (expected behavior)
 
-## Recent Improvements (v1.1)
+## Code Quality
 
-- Fixed critical bug preventing component placement (column 0 issue)
-- Increased SPICE reward scaling (2.7× improvement in max rewards)
-- Eliminated negative reward poisoning from failed simulations
-- Improved solution selection to find best complete circuits
-- Added depth-aware visit thresholds for better convergence
+This codebase follows **SOLID principles** and software engineering best practices:
+
+- ✅ **Single Responsibility**: Each function/class has one clear purpose
+- ✅ **Small Functions**: Functions are typically 5-20 lines (refactored from 50-150+)
+- ✅ **Comprehensive Documentation**: Every function has detailed docstrings
+- ✅ **Type Hints**: Full type annotations throughout
+- ✅ **Tested**: Comprehensive test suite with 20+ tests
+- ✅ **Clean Architecture**: Separated concerns (MCTS, Environment, Simulation, Utils)
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details.
+
+## Testing
+
+Run the test suite to verify functionality:
+
+```bash
+# Core MCTS tests
+python3 tests/test_mcts_fixes.py
+
+# Circuit validation tests
+python3 tests/test_validation_rules.py
+
+# Integration test
+python3 tests/test_mcts_search.py
+```
+
+See [`tests/README.md`](tests/README.md) for detailed test documentation.
+
+## Recent Improvements
+
+**v2.0 - Code Refactoring (Latest)**
+- Complete refactoring to follow SOLID principles
+- Broke down large functions into focused, testable units
+- Added comprehensive documentation and type hints
+- Organized project structure with dedicated directories
+
+**v1.1 - Bug Fixes & Performance**
+- Fixed critical component placement bug
+- Increased SPICE reward scaling (2.7× improvement)
+- Eliminated negative reward poisoning
+- Improved solution selection algorithm
 
 ## License
 

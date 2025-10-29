@@ -1,10 +1,21 @@
+"""
+Breadboard simulation for circuit topology generation.
+
+This module provides a virtual breadboard environment for placing electronic
+components and wiring them together. It enforces electrical connectivity rules
+and validates circuit topologies.
+
+Refactored to follow SOLID principles with small, focused methods.
+"""
+
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple, Set
 import copy
 
+
 # ============================================================
-# Component Metadata (Unchanged)
+# Component Metadata
 # ============================================================
 @dataclass(frozen=True)
 class ComponentInfo:
@@ -28,7 +39,7 @@ COMPONENT_CATALOG: Dict[str, ComponentInfo] = {
 }
 
 # ============================================================
-# Node and Component Models (Unchanged)
+# Node and Component Models
 # ============================================================
 class NodeType(Enum):
     NORMAL = auto()
@@ -114,39 +125,130 @@ class Breadboard:
         return any(self.is_row_active(r) for r in pin_rows)
 
     def can_place_wire(self, r1: int, c1: int, r2: int, c2: int) -> bool:
-        if r1 == r2: return False
-        # Check bounds
-        if not (0 <= r1 < self.ROWS and 0 <= c1 < self.COLUMNS):
+        """
+        Checks if a wire can be legally placed between two positions.
+
+        Args:
+            r1, c1: First endpoint position
+            r2, c2: Second endpoint position
+
+        Returns:
+            True if wire placement is valid
+        """
+        # Same row connections are not allowed
+        if r1 == r2:
             return False
-        if not (0 <= r2 < self.ROWS and 0 <= c2 < self.COLUMNS):
+
+        # Check if positions are within bounds
+        if not self._is_position_valid(r1, c1) or not self._is_position_valid(r2, c2):
             return False
+
         # Check for duplicate wire
-        wire_key = tuple(sorted(((r1, c1), (r2, c2))))
-        if wire_key in self.placed_wires: return False
+        if self._is_duplicate_wire(r1, c1, r2, c2):
+            return False
+
         # At least one endpoint must be on an active net
         if not (self.is_row_active(r1) or self.is_row_active(r2)):
             return False
 
-        # CRITICAL RULE: Prevent wires from connecting VDD/VSS to gate/base pins
-        # Check if either endpoint is a gate or base pin
-        for row, col in [(r1, c1), (r2, c2)]:
-            cell = self.grid[row][col]
-            if cell is not None:
-                component, pin_index = cell
-                # Check if this is a gate pin (MOSFET pin 1)
-                if component.type in ['nmos3', 'pmos3'] and pin_index == 1:
-                    # This is a gate pin - check if the other endpoint is VDD/VSS
-                    other_row = r2 if row == r1 else r1
-                    if other_row == self.VDD_ROW or other_row == self.VSS_ROW:
-                        return False  # Cannot wire gate to power rail
-                # Check if this is a base pin (BJT pin 1)
-                elif component.type in ['npn', 'pnp'] and pin_index == 1:
-                    # This is a base pin - check if the other endpoint is VDD/VSS
-                    other_row = r2 if row == r1 else r1
-                    if other_row == self.VDD_ROW or other_row == self.VSS_ROW:
-                        return False  # Cannot wire base to power rail
+        # Check gate/base pin connection rules
+        if not self._validate_control_pin_wiring(r1, c1, r2, c2):
+            return False
 
         return True
+
+    def _is_position_valid(self, row: int, col: int) -> bool:
+        """
+        Checks if a position is within the breadboard bounds.
+
+        Args:
+            row: Row index
+            col: Column index
+
+        Returns:
+            True if position is valid
+        """
+        return 0 <= row < self.ROWS and 0 <= col < self.COLUMNS
+
+    def _is_duplicate_wire(self, r1: int, c1: int, r2: int, c2: int) -> bool:
+        """
+        Checks if a wire already exists between two positions.
+
+        Args:
+            r1, c1: First endpoint position
+            r2, c2: Second endpoint position
+
+        Returns:
+            True if this wire already exists
+        """
+        wire_key = tuple(sorted(((r1, c1), (r2, c2))))
+        return wire_key in self.placed_wires
+
+    def _validate_control_pin_wiring(self, r1: int, c1: int, r2: int, c2: int) -> bool:
+        """
+        Validates that gate/base pins are not directly connected to power rails.
+
+        This prevents shorts and ensures proper circuit design.
+        Gate pins (MOSFET) and base pins (BJT) should not be directly
+        connected to VDD or VSS.
+
+        Args:
+            r1, c1: First endpoint position
+            r2, c2: Second endpoint position
+
+        Returns:
+            True if wiring is valid
+        """
+        # Check both endpoints
+        for row, col in [(r1, c1), (r2, c2)]:
+            if not self._is_control_pin_power_rail_connection_valid(row, col, r1, c1, r2, c2):
+                return False
+        return True
+
+    def _is_control_pin_power_rail_connection_valid(self, row: int, col: int,
+                                                     r1: int, c1: int, r2: int, c2: int) -> bool:
+        """
+        Checks if a specific position (gate or base pin) can be wired to the other endpoint.
+
+        Args:
+            row, col: Position to check (potential gate/base pin)
+            r1, c1: First wire endpoint
+            r2, c2: Second wire endpoint
+
+        Returns:
+            True if connection is valid
+        """
+        cell = self.grid[row][col]
+        if cell is None:
+            return True  # Empty cell, no restriction
+
+        component, pin_index = cell
+
+        # Check if this is a gate pin (MOSFET pin 1)
+        if component.type in ['nmos3', 'pmos3'] and pin_index == 1:
+            other_row = r2 if row == r1 else r1
+            if self._is_power_rail(other_row):
+                return False  # Cannot wire gate to power rail
+
+        # Check if this is a base pin (BJT pin 1)
+        elif component.type in ['npn', 'pnp'] and pin_index == 1:
+            other_row = r2 if row == r1 else r1
+            if self._is_power_rail(other_row):
+                return False  # Cannot wire base to power rail
+
+        return True
+
+    def _is_power_rail(self, row: int) -> bool:
+        """
+        Checks if a row is a power rail (VDD or VSS).
+
+        Args:
+            row: Row index to check
+
+        Returns:
+            True if row is VDD or VSS
+        """
+        return row == self.VDD_ROW or row == self.VSS_ROW
 
     def is_complete_and_valid(self) -> bool:
         """
@@ -258,37 +360,109 @@ class Breadboard:
         return new_board
 
     def legal_actions(self) -> List[Tuple]:
+        """
+        Generates all legal actions (component placements and wires) from current state.
+
+        Returns:
+            List of action tuples:
+            - Component placement: (comp_type, start_row, col)
+            - Wire placement: ("wire", r1, c1, r2, c2)
+            - Stop action: ("STOP",)
+        """
         actions: List[Tuple] = []
-        # Start from column 1 since column 0 is reserved for vin/vout
-        target_col = next((c for c in range(1, self.COLUMNS) if not all(
-            not self.is_empty(r, c) for r in range(self.WORK_START_ROW, self.WORK_END_ROW + 1)
-        )), -1)
+
+        # Find the next available column for component placement
+        target_col = self._find_target_column()
+
         if target_col == -1:
-            # Only allow STOP if circuit is complete AND has minimum complexity
-            num_components = len([c for c in self.placed_components
-                                 if c.type not in ['wire', 'vin', 'vout']])
-            if self.is_complete_and_valid() and num_components >= 3:
-                actions.append(("STOP",))
+            # No more space - only allow STOP if circuit is complete
+            self._add_stop_action_if_valid(actions)
             return actions
+
+        # Generate component placement actions
+        self._add_component_actions(actions, target_col)
+
+        # Generate wire placement actions
+        self._add_wire_actions(actions, target_col)
+
+        # Add STOP action if circuit is complete and valid
+        self._add_stop_action_if_valid(actions)
+
+        return actions
+
+    def _find_target_column(self) -> int:
+        """
+        Finds the next available column for component placement.
+
+        Returns:
+            Column index, or -1 if no columns are available
+        """
+        # Start from column 1 since column 0 is reserved for vin/vout
+        for c in range(1, self.COLUMNS):
+            # Check if this column has any empty space in the work area
+            if not all(not self.is_empty(r, c) for r in range(self.WORK_START_ROW, self.WORK_END_ROW + 1)):
+                return c
+        return -1
+
+    def _add_component_actions(self, actions: List[Tuple], target_col: int):
+        """
+        Adds all valid component placement actions to the action list.
+
+        Args:
+            actions: List to append actions to
+            target_col: Column to place components in
+        """
         for comp_type, info in COMPONENT_CATALOG.items():
-            if comp_type == 'wire': continue
+            if comp_type == 'wire':
+                continue  # Wires are handled separately
+
+            # Calculate the maximum starting row for this component
             max_start = self.WORK_END_ROW - (info.pin_count - 1)
+
+            # Try all possible starting rows
             for r in range(self.WORK_START_ROW, max_start + 1):
                 if self.can_place_component(comp_type, r, target_col):
                     actions.append((comp_type, r, target_col))
-        source_points = {(r, c) for c in range(target_col + 1) for r in range(self.ROWS) if self.is_row_active(r)}
+
+    def _add_wire_actions(self, actions: List[Tuple], target_col: int):
+        """
+        Adds all valid wire placement actions to the action list.
+
+        Args:
+            actions: List to append actions to
+            target_col: Current target column (wires can connect up to this column)
+        """
+        # Get all active positions (potential wire sources)
+        source_points = {(r, c) for c in range(target_col + 1)
+                        for r in range(self.ROWS) if self.is_row_active(r)}
+
+        # Get all positions (potential wire targets)
         target_points = {(r, c) for c in range(target_col + 1) for r in range(self.ROWS)}
+
+        # Try all possible wire connections
         for r1, c1 in source_points:
             for r2, c2 in target_points:
-                if (r1, c1) >= (r2, c2): continue
+                # Skip if positions are in wrong order (avoid duplicates)
+                if (r1, c1) >= (r2, c2):
+                    continue
+
                 if self.can_place_wire(r1, c1, r2, c2):
                     actions.append(("wire", r1, c1, r2, c2))
-        # Only allow STOP if circuit is complete AND has minimum complexity
+
+    def _add_stop_action_if_valid(self, actions: List[Tuple]):
+        """
+        Adds STOP action if the circuit is complete and has minimum complexity.
+
+        Args:
+            actions: List to append STOP action to
+        """
+        # Count non-wire, non-IO components
         num_components = len([c for c in self.placed_components
                              if c.type not in ['wire', 'vin', 'vout']])
+
+        # Only allow STOP if circuit is complete AND has minimum complexity
         if self.is_complete_and_valid() and num_components >= 3:
             actions.append(("STOP",))
-        return actions
 
     def get_reward(self) -> float:
         if not self.is_complete_and_valid():
@@ -357,30 +531,83 @@ class Breadboard:
     def to_netlist(self) -> Optional[str]:
         """
         Converts the breadboard circuit to a SPICE netlist format.
+
         Returns None if the circuit is not complete and valid.
 
         Strategy: Build a connectivity graph where component pins get unique nets,
-        then merge nets connected by wires. This prevents components in different
-        columns from incorrectly sharing nets due to row-level union-find.
+        then merge nets connected by wires.
+
+        Returns:
+            SPICE netlist string, or None if circuit is invalid
         """
         if not self.is_complete_and_valid():
             return None
 
-        # Build connectivity graph: each position starts with its own net
-        position_to_net: Dict[Tuple[int, int], str] = {}
-        net_counter = 0
+        # Build net connectivity map
+        position_to_net = self._build_net_mapping()
 
-        # First pass: Assign initial net names to all positions (components + wire endpoints)
+        # Generate netlist sections
+        lines = self._generate_netlist_header()
+        lines.extend(self._generate_power_supply())
+        lines.extend(self._generate_input_source(position_to_net))
+        lines.extend(self._generate_circuit_components(position_to_net))
+        lines.extend(self._generate_output_probe(position_to_net))
+        lines.extend(self._generate_device_models())
+        lines.extend(self._generate_simulation_commands())
+
+        return "\n".join(lines)
+
+    def _build_net_mapping(self) -> Dict[Tuple[int, int], str]:
+        """
+        Builds a mapping from positions to net names, handling wire connections.
+
+        Returns:
+            Dictionary mapping (row, col) positions to net names
+        """
+        # Collect all positions used by components
+        all_positions = self._collect_all_positions()
+
+        # Assign initial net names
+        position_to_net = self._assign_initial_nets(all_positions)
+
+        # Merge nets connected by wires
+        self._merge_connected_nets(position_to_net)
+
+        return position_to_net
+
+    def _collect_all_positions(self) -> Set[Tuple[int, int]]:
+        """
+        Collects all positions occupied by component pins.
+
+        Returns:
+            Set of (row, col) positions
+        """
         all_positions: Set[Tuple[int, int]] = set()
-
         for comp in self.placed_components:
             for pin in comp.pins:
                 all_positions.add(pin)
+        return all_positions
 
-        for pos in sorted(all_positions):
+    def _assign_initial_nets(self, positions: Set[Tuple[int, int]]) -> Dict[Tuple[int, int], str]:
+        """
+        Assigns initial net names to all positions.
+
+        Power rails get special names (0 for ground, VDD for power).
+        Other positions get unique net names.
+
+        Args:
+            positions: Set of positions to assign nets to
+
+        Returns:
+            Dictionary mapping positions to net names
+        """
+        position_to_net: Dict[Tuple[int, int], str] = {}
+        net_counter = 0
+
+        for pos in sorted(positions):
             row, col = pos
 
-            # Special handling for power rails - only if position is ON the power rail row
+            # Special handling for power rails
             if row == self.VSS_ROW:
                 position_to_net[pos] = "0"  # Ground
             elif row == self.VDD_ROW:
@@ -390,17 +617,23 @@ class Breadboard:
                 position_to_net[pos] = f"n{net_counter}"
                 net_counter += 1
 
-        # Second pass: Merge nets connected by wires
-        # Build list of wire connections
-        wire_connections: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
-        for comp in self.placed_components:
-            if comp.type == 'wire' and len(comp.pins) == 2:
-                wire_connections.append((comp.pins[0], comp.pins[1]))
+        return position_to_net
 
-        # Merge nets using union-find on net names
+    def _merge_connected_nets(self, position_to_net: Dict[Tuple[int, int], str]):
+        """
+        Merges nets that are connected by wires using union-find.
+
+        Args:
+            position_to_net: Dictionary to update with merged net names
+        """
+        # Collect wire connections
+        wire_connections = self._collect_wire_connections()
+
+        # Use union-find to merge nets
         net_parent: Dict[str, str] = {}
 
         def find_net(net: str) -> str:
+            """Finds the root net name with path compression."""
             if net not in net_parent:
                 net_parent[net] = net
                 return net
@@ -409,9 +642,10 @@ class Breadboard:
             return net_parent[net]
 
         def union_nets(net1: str, net2: str):
+            """Unions two nets, preferring special nets (0, VDD)."""
             root1, root2 = find_net(net1), find_net(net2)
             if root1 != root2:
-                #  Prefer keeping special nets (0, VDD)
+                # Prefer keeping special nets (0, VDD)
                 if root1 in ["0", "VDD"]:
                     net_parent[root2] = root1
                 elif root2 in ["0", "VDD"]:
@@ -424,21 +658,49 @@ class Breadboard:
             if pin1 in position_to_net and pin2 in position_to_net:
                 union_nets(position_to_net[pin1], position_to_net[pin2])
 
-        # Apply net merges to get final net names
+        # Apply final net names
         for pin in position_to_net:
             position_to_net[pin] = find_net(position_to_net[pin])
 
-        # Build the netlist
+    def _collect_wire_connections(self) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """
+        Collects all wire connections from placed components.
+
+        Returns:
+            List of wire endpoint pairs
+        """
+        wire_connections = []
+        for comp in self.placed_components:
+            if comp.type == 'wire' and len(comp.pins) == 2:
+                wire_connections.append((comp.pins[0], comp.pins[1]))
+        return wire_connections
+
+    def _generate_netlist_header(self) -> List[str]:
+        """Generates the netlist header comment."""
+        return [
+            "* Auto-generated SPICE netlist from MCTS topology generator",
+            ""
+        ]
+
+    def _generate_power_supply(self) -> List[str]:
+        """Generates power supply voltage source."""
+        return [
+            "* Power supply",
+            "VDD VDD 0 DC 5V",
+            ""
+        ]
+
+    def _generate_input_source(self, position_to_net: Dict[Tuple[int, int], str]) -> List[str]:
+        """
+        Generates input signal source (VIN).
+
+        Args:
+            position_to_net: Net mapping dictionary
+
+        Returns:
+            List of netlist lines
+        """
         lines = []
-        lines.append("* Auto-generated SPICE netlist from MCTS topology generator")
-        lines.append("")
-
-        # Voltage sources
-        lines.append("* Power supply")
-        lines.append("VDD VDD 0 DC 5V")
-        lines.append("")
-
-        # Add input signal source (vin)
         vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
         if vin_comp:
             vin_pos = vin_comp.pins[0]
@@ -446,58 +708,127 @@ class Breadboard:
             lines.append("* Input signal")
             lines.append(f"VIN {vin_net} 0 AC 1V")
             lines.append("")
+        return lines
 
-        # Add components
-        lines.append("* Circuit components")
+    def _generate_circuit_components(self, position_to_net: Dict[Tuple[int, int], str]) -> List[str]:
+        """
+        Generates SPICE lines for all circuit components.
+
+        Args:
+            position_to_net: Net mapping dictionary
+
+        Returns:
+            List of netlist lines
+        """
+        lines = ["* Circuit components"]
         comp_counters = {}
 
         for comp in self.placed_components:
             if comp.type in ['vin', 'vout', 'wire']:
                 continue  # Skip markers and wires
 
-            # Get component prefix and increment counter
-            # MOSFETs must use 'M' prefix in SPICE
-            if comp.type in ['nmos3', 'pmos3']:
-                comp_prefix = 'M'
-                # Use unified counter for all MOSFETs (they share 'M' prefix)
-                counter_key = 'mosfet'
-            else:
-                comp_prefix = comp.type[0].upper()
-                counter_key = comp.type
-
-            if counter_key not in comp_counters:
-                comp_counters[counter_key] = 0
-            comp_counters[counter_key] += 1
-            comp_id = f"{comp_prefix}{comp_counters[counter_key]}"
-
-            # Get net names for each pin
-            pin_nets = [position_to_net[pin] for pin in comp.pins]
-
-            # Generate SPICE line based on component type
-            if comp.type == 'resistor':
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1k")
-            elif comp.type == 'capacitor':
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1u")
-            elif comp.type == 'inductor':
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1m")
-            elif comp.type == 'diode':
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} DMOD")
-            elif comp.type == 'nmos3':
-                # NMOS: Drain Gate Source Bulk (Bulk tied to source)
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} {pin_nets[2]} NMOS_MODEL L=1u W=10u")
-            elif comp.type == 'pmos3':
-                # PMOS: Drain Gate Source Bulk (Bulk tied to VDD)
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} VDD PMOS_MODEL L=1u W=10u")
-            elif comp.type == 'npn':
-                # NPN: Collector Base Emitter
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} NPN_MODEL")
-            elif comp.type == 'pnp':
-                # PNP: Collector Base Emitter
-                lines.append(f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} PNP_MODEL")
+            spice_line = self._generate_component_line(comp, position_to_net, comp_counters)
+            if spice_line:
+                lines.append(spice_line)
 
         lines.append("")
+        return lines
 
-        # Add output probe (vout)
+    def _generate_component_line(self, comp: Component,
+                                 position_to_net: Dict[Tuple[int, int], str],
+                                 comp_counters: Dict[str, int]) -> Optional[str]:
+        """
+        Generates a SPICE netlist line for a single component.
+
+        Args:
+            comp: Component to generate line for
+            position_to_net: Net mapping dictionary
+            comp_counters: Dictionary tracking component counts by type
+
+        Returns:
+            SPICE netlist line, or None if component should be skipped
+        """
+        # Get component ID
+        comp_id = self._get_component_id(comp.type, comp_counters)
+
+        # Get net names for component pins
+        pin_nets = [position_to_net[pin] for pin in comp.pins]
+
+        # Generate SPICE line based on component type
+        return self._format_component_spice_line(comp.type, comp_id, pin_nets)
+
+    def _get_component_id(self, comp_type: str, comp_counters: Dict[str, int]) -> str:
+        """
+        Gets a unique component ID for SPICE netlist.
+
+        Args:
+            comp_type: Type of component
+            comp_counters: Dictionary tracking component counts
+
+        Returns:
+            Component ID string (e.g., "R1", "M2")
+        """
+        # MOSFETs must use 'M' prefix in SPICE
+        if comp_type in ['nmos3', 'pmos3']:
+            comp_prefix = 'M'
+            counter_key = 'mosfet'  # Unified counter for all MOSFETs
+        else:
+            comp_prefix = comp_type[0].upper()
+            counter_key = comp_type
+
+        # Increment counter
+        if counter_key not in comp_counters:
+            comp_counters[counter_key] = 0
+        comp_counters[counter_key] += 1
+
+        return f"{comp_prefix}{comp_counters[counter_key]}"
+
+    def _format_component_spice_line(self, comp_type: str, comp_id: str,
+                                     pin_nets: List[str]) -> Optional[str]:
+        """
+        Formats a SPICE netlist line for a component.
+
+        Args:
+            comp_type: Type of component
+            comp_id: Component identifier
+            pin_nets: List of net names for component pins
+
+        Returns:
+            Formatted SPICE line
+        """
+        if comp_type == 'resistor':
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1k"
+        elif comp_type == 'capacitor':
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1u"
+        elif comp_type == 'inductor':
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1m"
+        elif comp_type == 'diode':
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} DMOD"
+        elif comp_type == 'nmos3':
+            # NMOS: Drain Gate Source Bulk (Bulk tied to source)
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} {pin_nets[2]} NMOS_MODEL L=1u W=10u"
+        elif comp_type == 'pmos3':
+            # PMOS: Drain Gate Source Bulk (Bulk tied to VDD)
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} VDD PMOS_MODEL L=1u W=10u"
+        elif comp_type == 'npn':
+            # NPN: Collector Base Emitter
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} NPN_MODEL"
+        elif comp_type == 'pnp':
+            # PNP: Collector Base Emitter
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} PNP_MODEL"
+        return None
+
+    def _generate_output_probe(self, position_to_net: Dict[Tuple[int, int], str]) -> List[str]:
+        """
+        Generates output probe (VOUT).
+
+        Args:
+            position_to_net: Net mapping dictionary
+
+        Returns:
+            List of netlist lines
+        """
+        lines = []
         vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
         if vout_comp:
             vout_pos = vout_comp.pins[0]
@@ -505,22 +836,27 @@ class Breadboard:
             lines.append("* Output probe")
             lines.append(f".print ac v({vout_net})")
             lines.append("")
+        return lines
 
-        # Add device models
-        lines.append("* Device models")
-        lines.append(".model DMOD D")
-        lines.append(".model NMOS_MODEL NMOS (LEVEL=1 VTO=0.7 KP=20u)")
-        lines.append(".model PMOS_MODEL PMOS (LEVEL=1 VTO=-0.7 KP=10u)")
-        lines.append(".model NPN_MODEL NPN (BF=100)")
-        lines.append(".model PNP_MODEL PNP (BF=100)")
-        lines.append("")
+    def _generate_device_models(self) -> List[str]:
+        """Generates device model definitions."""
+        return [
+            "* Device models",
+            ".model DMOD D",
+            ".model NMOS_MODEL NMOS (LEVEL=1 VTO=0.7 KP=20u)",
+            ".model PMOS_MODEL PMOS (LEVEL=1 VTO=-0.7 KP=10u)",
+            ".model NPN_MODEL NPN (BF=100)",
+            ".model PNP_MODEL PNP (BF=100)",
+            ""
+        ]
 
-        # Add simulation commands
-        lines.append("* Simulation commands")
-        lines.append(".ac dec 100 1 1MEG")
-        lines.append(".end")
-
-        return "\n".join(lines)
+    def _generate_simulation_commands(self) -> List[str]:
+        """Generates simulation control commands."""
+        return [
+            "* Simulation commands",
+            ".ac dec 100 1 1MEG",
+            ".end"
+        ]
     
 # ============================================================
 # Checks and Tests (Unchanged)
@@ -660,7 +996,7 @@ def test_netlist_conversion():
 
     netlist4 = b4.to_netlist()
     assert netlist4 is not None
-    assert "N1" in netlist4, "Should contain NMOS transistor"
+    assert "M1" in netlist4, "Should contain NMOS transistor (M1)"
     assert "NMOS_MODEL" in netlist4, "Should reference NMOS model"
     print("✅ Passed: Transistor component handled correctly")
 

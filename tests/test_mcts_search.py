@@ -3,6 +3,11 @@
 Test a short MCTS search to validate the complete workflow.
 """
 
+import sys
+import os
+# Add core directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
+
 from topology_game_board import Breadboard
 from MCTS import MCTS
 

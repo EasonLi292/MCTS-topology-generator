@@ -6,6 +6,11 @@ Test suite for new validation rules:
 3. All nets must be connected before simulation
 """
 
+import sys
+import os
+# Add parent directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
+
 from topology_game_board import Breadboard
 
 def test_floating_component_detection():
