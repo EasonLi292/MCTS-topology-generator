@@ -7,7 +7,8 @@ Then let MCTS try to complete it.
 """
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'core'))
+# Add parent directory's core module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
 
 from topology_game_board import Breadboard
 from MCTS import MCTS
