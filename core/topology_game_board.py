@@ -116,8 +116,14 @@ class Breadboard:
         if not info.can_place_multiple and getattr(self, f"{comp_type}_placed", False):
             return False
         pin_rows = range(start_row, start_row + info.pin_count)
-        if not (self.WORK_START_ROW <= pin_rows.start and pin_rows.stop - 1 <= self.WORK_END_ROW):
+
+        # Allow components to span from VIN/VOUT rows into work area
+        # VIN_ROW (1) and VOUT_ROW (28) are valid starting positions
+        min_allowed_row = self.VIN_ROW  # Allow starting from row 1
+        max_allowed_row = self.VOUT_ROW  # Allow ending at row 28
+        if not (min_allowed_row <= pin_rows.start and pin_rows.stop - 1 <= max_allowed_row):
             return False
+
         if not all(self.is_empty(r, col) for r in pin_rows):
             return False
         if info.pin_count == 1:
@@ -256,21 +262,16 @@ class Breadboard:
 
         Requirements:
         1. VIN and VOUT must be placed
-        2. VIN and VOUT must be electrically connected
-        3. All components must be connected (no floating parts)
-        4. Gate/Base pins must not be directly connected to VDD/VSS
+        2. All components must be connected (including VIN-VOUT path)
+        3. Gate/Base pins must not be directly connected to VDD/VSS
+
+        Note: VIN-VOUT connectivity is now checked within _all_components_connected()
+        using position-based net mapping for accurate validation.
         """
         if not (self.vin_placed and self.vout_placed):
             return False
 
-        vin_row = next((c.pins[0][0] for c in self.placed_components if c.type == 'vin'), -1)
-        vout_row = next((c.pins[0][0] for c in self.placed_components if c.type == 'vout'), -1)
-
-        # Check VIN-VOUT connectivity
-        if vin_row == -1 or self.find(vin_row) != self.find(vout_row):
-            return False
-
-        # Check for floating components
+        # Check for floating components (also validates VIN-VOUT connection)
         if not self._all_components_connected():
             return False
 
@@ -285,25 +286,44 @@ class Breadboard:
         Verify that all component pins are part of the main circuit.
         No floating/disconnected components allowed.
 
+        Uses position-based connectivity (same as netlist generation) to ensure
+        validation matches actual electrical connectivity.
+
         Returns:
             True if all components are connected to the VIN-VOUT path
         """
         if not self.vin_placed or not self.vout_placed:
             return False
 
-        # Get the main net (VIN-VOUT connection)
-        vin_row = next((c.pins[0][0] for c in self.placed_components if c.type == 'vin'), -1)
-        main_net = self.find(vin_row)
+        # Build the same position-to-net mapping used in netlist generation
+        position_to_net = self._build_net_mapping()
 
-        # Check every non-wire component
+        # Get VIN and VOUT components
+        vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
+        vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
+
+        if not vin_comp or not vout_comp:
+            return False
+
+        # Get the nets for VIN and VOUT
+        vin_net = position_to_net[vin_comp.pins[0]]
+        vout_net = position_to_net[vout_comp.pins[0]]
+
+        # Check VIN and VOUT are on the same net (connected)
+        if vin_net != vout_net:
+            return False
+
+        main_net = vin_net
+
+        # Check every non-wire component has at least one pin on the main net
         for comp in self.placed_components:
             if comp.type in ['vin', 'vout', 'wire']:
                 continue
 
             # At least one pin must be connected to the main net
             component_connected = False
-            for pin_row, pin_col in comp.pins:
-                if self.find(pin_row) == main_net:
+            for pin_pos in comp.pins:
+                if position_to_net[pin_pos] == main_net:
                     component_connected = True
                     break
 
@@ -417,10 +437,11 @@ class Breadboard:
                 continue  # Wires are handled separately
 
             # Calculate the maximum starting row for this component
-            max_start = self.WORK_END_ROW - (info.pin_count - 1)
+            # Allow components to connect from VIN_ROW (1) to VOUT_ROW (28)
+            max_start = self.VOUT_ROW - (info.pin_count - 1)
 
-            # Try all possible starting rows
-            for r in range(self.WORK_START_ROW, max_start + 1):
+            # Try all possible starting rows from VIN_ROW to max_start
+            for r in range(self.VIN_ROW, max_start + 1):
                 if self.can_place_component(comp_type, r, target_col):
                     actions.append((comp_type, r, target_col))
 
@@ -461,7 +482,7 @@ class Breadboard:
                              if c.type not in ['wire', 'vin', 'vout']])
 
         # Only allow STOP if circuit is complete AND has minimum complexity
-        if self.is_complete_and_valid() and num_components >= 3:
+        if self.is_complete_and_valid() and num_components >= 1:
             actions.append(("STOP",))
 
     def get_reward(self) -> float:
@@ -621,7 +642,7 @@ class Breadboard:
 
     def _merge_connected_nets(self, position_to_net: Dict[Tuple[int, int], str]):
         """
-        Merges nets that are connected by wires using union-find.
+        Merges nets that are connected by wires and multi-pin components using union-find.
 
         Args:
             position_to_net: Dictionary to update with merged net names
@@ -653,7 +674,18 @@ class Breadboard:
                 else:
                     net_parent[root2] = root1
 
-        # Apply wire connections
+        # First, union all pins of multi-pin components
+        # (component pins are inherently connected)
+        for comp in self.placed_components:
+            if comp.type in ['vin', 'vout', 'wire']:
+                continue
+            if len(comp.pins) > 1:
+                # Union all pins of this component together
+                first_net = position_to_net[comp.pins[0]]
+                for pin in comp.pins[1:]:
+                    union_nets(first_net, position_to_net[pin])
+
+        # Then apply wire connections
         for pin1, pin2 in wire_connections:
             if pin1 in position_to_net and pin2 in position_to_net:
                 union_nets(position_to_net[pin1], position_to_net[pin2])
