@@ -29,6 +29,30 @@ def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
     return min_start + clamped_offset
 
 
+def attach_vin_via_gate(board: Breadboard, target_row: int, target_col: int, driver_col: int = 5) -> Breadboard:
+    """Attach VIN to a target node using an NMOS gate."""
+    driver_row = min(target_row, board.WORK_END_ROW - 2)
+    board = board.apply_action(('nmos3', driver_row, driver_col))
+    board = board.apply_action(('wire', board.VIN_ROW, 0, driver_row + 1, driver_col))
+    board = board.apply_action(('wire', driver_row, driver_col, target_row, target_col))
+    board = board.apply_action(('wire', driver_row + 2, driver_col, target_row, target_col))
+    return board
+
+def attach_power_and_ground(board: Breadboard, target_row: int, target_col: int) -> Breadboard:
+    """Attach supply and ground resistors to the specified signal node."""
+    # Connect to VDD using column 2
+    board = board.apply_action(('resistor', target_row, 2))
+    board = board.apply_action(('wire', target_row, 2, target_row, target_col))
+    board = board.apply_action(('wire', target_row + 1, 2, board.VDD_ROW, 0))
+
+    # Connect to ground using column 3
+    board = board.apply_action(('resistor', target_row, 3))
+    board = board.apply_action(('wire', target_row, 3, target_row, target_col))
+    board = board.apply_action(('wire', target_row + 1, 3, board.VSS_ROW, 0))
+
+    return board
+
+
 def test_basic_translation():
     """Test that vertical translation preserves circuit topology."""
     print("\n" + "="*60)
@@ -39,15 +63,17 @@ def test_basic_translation():
     b0 = Breadboard()
     resistor_row = choose_row(b0, 3, height=2)
     b0 = b0.apply_action(('resistor', resistor_row, 1))  # Resistor spanning two rows
-    b0 = b0.apply_action(('wire', b0.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
+    b0 = attach_vin_via_gate(b0, resistor_row, 1, driver_col=5)
     b0 = b0.apply_action(('wire', resistor_row + 1, 1, b0.VOUT_ROW, 0))  # Resistor to VOUT
+    b0 = attach_power_and_ground(b0, resistor_row + 1, 1)
 
     print(f"Original circuit:")
     print(f"  Components: {len(b0.placed_components)}")
     print(f"  Row range: {get_min_max_rows(b0)}")
 
     # Translate down by 3 rows
-    max_down = b0.WORK_END_ROW - (resistor_row + 1)
+    _, max_row = get_min_max_rows(b0)
+    max_down = max(0, b0.WORK_END_ROW - max_row)
     translation_offset = min(3, max_down)
     b1 = translate_vertically(b0, translation_offset)
     assert b1 is not None, "Translation should succeed"
@@ -83,8 +109,9 @@ def test_canonical_form():
         b = Breadboard()
         resistor_row = choose_row(b, 3 + offset, height=2)
         b = b.apply_action(('resistor', resistor_row, 1))
-        b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
+        b = attach_vin_via_gate(b, resistor_row, 1, driver_col=5)  # VIN to resistor
         b = b.apply_action(('wire', resistor_row + 1, 1, b.VOUT_ROW, 0))  # Resistor to VOUT
+        b = attach_power_and_ground(b, resistor_row + 1, 1)
 
         circuits.append(b)
         print(f"Circuit with resistor at row {resistor_row}: range {get_min_max_rows(b)}")
@@ -111,8 +138,9 @@ def test_generate_translations():
     b0 = Breadboard()
     resistor_row = choose_row(b0, 6, height=2)
     b0 = b0.apply_action(('resistor', resistor_row, 1))  # R at rows resistor_row/resistor_row+1
-    b0 = b0.apply_action(('wire', b0.VIN_ROW, 0, resistor_row, 1))  # VIN to R
+    b0 = attach_vin_via_gate(b0, resistor_row, 1, driver_col=5)  # VIN to R
     b0 = b0.apply_action(('wire', resistor_row + 1, 1, b0.VOUT_ROW, 0))  # R to VOUT
+    b0 = attach_power_and_ground(b0, resistor_row + 1, 1)
 
     print(f"Original circuit row range: {get_min_max_rows(b0)}")
 
@@ -144,14 +172,16 @@ def test_augment_board_set():
     b1 = Breadboard()
     r1 = choose_row(b1, 4, height=2)
     b1 = b1.apply_action(('resistor', r1, 1))
-    b1 = b1.apply_action(('wire', b1.VIN_ROW, 0, r1, 1))
+    b1 = attach_vin_via_gate(b1, r1, 1, driver_col=5)
     b1 = b1.apply_action(('wire', r1 + 1, 1, b1.VOUT_ROW, 0))
+    b1 = attach_power_and_ground(b1, r1 + 1, 1)
 
     b2 = Breadboard()
     c2 = choose_row(b2, 8, height=2)
     b2 = b2.apply_action(('capacitor', c2, 1))
-    b2 = b2.apply_action(('wire', b2.VIN_ROW, 0, c2, 1))
+    b2 = attach_vin_via_gate(b2, c2, 1, driver_col=5)
     b2 = b2.apply_action(('wire', c2 + 1, 1, b2.VOUT_ROW, 0))
+    b2 = attach_power_and_ground(b2, c2 + 1, 1)
 
     # Assign rewards
     boards_with_rewards = {
@@ -189,8 +219,9 @@ def test_deduplication():
         b = Breadboard()
         row = choose_row(b, 3 + offset, height=2)
         b = b.apply_action(('resistor', row, 1))
-        b = b.apply_action(('wire', b.VIN_ROW, 0, row, 1))
+        b = attach_vin_via_gate(b, row, 1, driver_col=5)
         b = b.apply_action(('wire', row + 1, 1, b.VOUT_ROW, 0))
+        b = attach_power_and_ground(b, row + 1, 1)
         circuits.append(b)
 
     print(f"Created {len(circuits)} circuits (same topology, different positions)")
@@ -223,6 +254,7 @@ def test_canonical_invariance():
     b0 = b0.apply_action(('wire', b0.VIN_ROW, 0, resistor_row, 1))
     b0 = b0.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))
     b0 = b0.apply_action(('wire', capacitor_row + 1, 1, b0.VOUT_ROW, 0))
+    b0 = attach_power_and_ground(b0, resistor_row + 1, 1)
 
     # Translate multiple times
     max_down = b0.WORK_END_ROW - (capacitor_row + 1)

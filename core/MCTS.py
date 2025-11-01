@@ -239,6 +239,8 @@ class MCTS:
             - vout_row: Row position of VOUT (-1 if not found)
             - vin_vout_connected: Boolean indicating if VIN and VOUT are electrically connected
         """
+        connectivity = state.get_connectivity_summary()
+
         # Count components (excluding wires and I/O)
         num_components = len([c for c in state.placed_components
                              if c.type not in ['wire', 'vin', 'vout']])
@@ -254,10 +256,12 @@ class MCTS:
         vin_row = next((c.pins[0][0] for c in state.placed_components if c.type == 'vin'), -1)
         vout_row = next((c.pins[0][0] for c in state.placed_components if c.type == 'vout'), -1)
 
-        # Check if VIN and VOUT are connected
-        vin_vout_connected = False
-        if vin_row != -1 and vout_row != -1:
-            vin_vout_connected = (state.find(vin_row) == state.find(vout_row))
+        # FIXED: Check if VIN and VOUT are connected through COMPONENT GRAPH
+        # Use same metric as validation (reachable_vout) instead of union-find
+        # This prevents rewarding direct VIN→VOUT wires that won't become valid
+        vin_vout_connected = connectivity.get('reachable_vout', False)
+
+        supply_connected = connectivity["rails_in_component"]["VDD"] and connectivity["rails_in_component"]["0"]
 
         return {
             'num_components': num_components,
@@ -265,7 +269,12 @@ class MCTS:
             'unique_types': unique_types,
             'vin_row': vin_row,
             'vout_row': vout_row,
-            'vin_vout_connected': vin_vout_connected
+            'vin_vout_connected': vin_vout_connected,
+            'touches_vdd': connectivity.get('touches_vdd', False),
+            'touches_vss': connectivity.get('touches_vss', False),
+            'supply_connected': supply_connected,
+            'has_active_components': connectivity.get('has_active_components', False),
+            'connectivity': connectivity
         }
 
     def _calculate_connection_bonus(self, metrics: dict) -> float:
@@ -282,18 +291,24 @@ class MCTS:
             # Connected! But only give bonus if there are components in the circuit
             # This prevents the algorithm from just wiring vin→vout directly
             if metrics['num_components'] > 0:
-                return 20.0  # Reduced from 50 to balance with component rewards
+                base = 20.0
             else:
-                return 5.0  # Small bonus for empty direct connection
+                base = 5.0  # Small bonus for empty direct connection
         else:
             # Not connected yet - small penalty to encourage connection
-            return -2.0
+            base = -2.0
+
+        if metrics['num_components'] > 0 and metrics.get('supply_connected'):
+            base += 10.0
+
+        return base
 
     def _calculate_heuristic_reward(self, metrics: dict) -> float:
         """
         Calculates heuristic reward based on circuit complexity.
 
         Encourages circuits with diverse components and proper connectivity.
+        IMPROVED: Added progressive rewards for meeting validation criteria.
 
         Args:
             metrics: Circuit metrics dictionary
@@ -302,12 +317,23 @@ class MCTS:
             Heuristic reward score
         """
         connection_bonus = self._calculate_connection_bonus(metrics)
+        conn = metrics.get('connectivity', {})
 
         # Reward component count and diversity
-        # Component diversity and connection are key
         heuristic_reward = (metrics['num_components'] * 5.0) + \
                           (metrics['unique_types'] * 8.0) + \
                           connection_bonus
+
+        # IMPROVED: Progressive rewards for meeting validation requirements
+        # This guides the search toward valid circuits step-by-step
+        if conn.get('touches_vdd', False):
+            heuristic_reward += 8.0  # Reward touching VDD
+        if conn.get('touches_vss', False):
+            heuristic_reward += 8.0  # Reward touching VSS
+        if conn.get('reachable_vout', False):
+            heuristic_reward += 15.0  # Big reward for VIN->VOUT path
+        if conn.get('all_components_reachable', False):
+            heuristic_reward += 10.0  # Reward having all components connected
 
         return heuristic_reward
 

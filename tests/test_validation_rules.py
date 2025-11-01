@@ -32,6 +32,15 @@ def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
     clamped_offset = max(0, min(offset, max_start - min_start))
     return min_start + clamped_offset
 
+def attach_vin_via_gate(board: Breadboard, target_row: int, target_col: int, driver_col: int = 5) -> Breadboard:
+    """Connect VIN to a target node through the gate of an NMOS transistor."""
+    driver_row = min(target_row, board.WORK_END_ROW - 2)
+    board = board.apply_action(('nmos3', driver_row, driver_col))
+    board = board.apply_action(('wire', board.VIN_ROW, 0, driver_row + 1, driver_col))  # VIN to gate
+    board = board.apply_action(('wire', driver_row, driver_col, target_row, target_col))  # Drain to node
+    board = board.apply_action(('wire', driver_row + 2, driver_col, target_row, target_col))  # Source to node
+    return board
+
 def test_floating_component_detection():
     """Test that floating components are properly detected and rejected."""
     print("\n=== Test 1: Floating Component Detection ===")
@@ -44,7 +53,7 @@ def test_floating_component_detection():
 
     # Place resistor connected to VIN
     b = b.apply_action(('resistor', resistor_row, 1))
-    b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
+    b = attach_vin_via_gate(b, resistor_row, 1, driver_col=5)
 
     # Place a floating capacitor (not connected to anything)
     b = b.apply_action(('capacitor', floating_cap_row, 1))
@@ -161,7 +170,7 @@ def test_valid_circuit_with_all_connected():
     capacitor_row = choose_row(b, 6, height=2)
     inductor_row = choose_row(b, 9, height=2)
     b = b.apply_action(('resistor', resistor_row, 1))
-    b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor pin 1
+    b = attach_vin_via_gate(b, resistor_row, 1, driver_col=5)
 
     b = b.apply_action(('capacitor', capacitor_row, 1))
     b = b.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))  # Resistor pin 2 to capacitor pin 1
@@ -170,6 +179,18 @@ def test_valid_circuit_with_all_connected():
     b = b.apply_action(('wire', capacitor_row + 1, 1, inductor_row, 1))  # Capacitor pin 2 to inductor pin 1
 
     b = b.apply_action(('wire', inductor_row + 1, 1, b.VOUT_ROW, 0))  # Inductor pin 2 to VOUT
+
+    # Provide a load to VDD using an additional resistor in column 2
+    supply_res_row = resistor_row
+    b = b.apply_action(('resistor', supply_res_row, 2))
+    b = b.apply_action(('wire', supply_res_row, 2, resistor_row + 1, 1))  # Tie to signal path
+    b = b.apply_action(('wire', supply_res_row + 1, 2, b.VDD_ROW, 0))      # Connect to VDD rail
+
+    # Provide a path to ground using a second resistor in column 3
+    ground_res_row = capacitor_row
+    b = b.apply_action(('resistor', ground_res_row, 3))
+    b = b.apply_action(('wire', ground_res_row, 3, capacitor_row + 1, 1))   # Connect to intermediate node
+    b = b.apply_action(('wire', ground_res_row + 1, 3, b.VSS_ROW, 0))       # Connect to ground
 
     # All components are connected, circuit should be valid
     if b.is_complete_and_valid():
@@ -202,6 +223,12 @@ def test_transistor_circuit_with_valid_connections():
     b = b.apply_action(('wire', nmos_row, 1, b.VOUT_ROW, 0))  # Drain to VOUT
     b = b.apply_action(('wire', source_row, 1, b.VSS_ROW, 0))  # Source to ground
 
+    # Add supply resistor to VDD
+    supply_res_row = gate_row  # reuse nearby empty column
+    b = b.apply_action(('resistor', supply_res_row, 2))
+    b = b.apply_action(('wire', supply_res_row, 2, nmos_row, 1))  # Connect to drain
+    b = b.apply_action(('wire', supply_res_row + 1, 2, b.VDD_ROW, 0))  # Connect to VDD rail
+
     # This should be valid - gate connected to VIN (not VDD/VSS)
     gate_validation = b._validate_gate_base_connections()
 
@@ -228,7 +255,7 @@ def test_partial_circuit_not_valid():
     # Place components but don't connect VIN to VOUT
     resistor_row = choose_row(b, 3, height=2)
     b = b.apply_action(('resistor', resistor_row, 1))
-    b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
+    b = attach_vin_via_gate(b, resistor_row, 1, driver_col=6)
     # (Don't connect to VOUT)
 
     if b.is_complete_and_valid():

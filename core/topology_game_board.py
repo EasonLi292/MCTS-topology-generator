@@ -8,6 +8,7 @@ and validates circuit topologies.
 Refactored to follow SOLID principles with small, focused methods.
 """
 
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple, Set
@@ -130,9 +131,12 @@ class Breadboard:
             return False
         pin_rows = range(start_row, start_row + info.pin_count)
 
-        # Allow components to span from VIN/VOUT rows into work area
-        min_allowed_row = self.VIN_ROW  # Allow starting from VIN row
-        max_allowed_row = self.VOUT_ROW  # Allow ending at VOUT row
+        # FIXED: Prevent components from having pins ON VIN/VOUT rows
+        # Components can only be placed in the work area (rows 2-12 for 15-row board)
+        # This prevents electrical conflicts where component pins share a row with VIN/VOUT
+        # but are on different nets due to different columns
+        min_allowed_row = self.WORK_START_ROW  # Start after VIN row
+        max_allowed_row = self.WORK_END_ROW    # End before VOUT row
         if not (min_allowed_row <= pin_rows.start and pin_rows.stop - 1 <= max_allowed_row):
             return False
 
@@ -140,7 +144,18 @@ class Breadboard:
             return False
         if info.pin_count == 1:
             return not self.is_row_active(start_row)
-        return any(self.is_row_active(r) for r in pin_rows)
+
+        # FIXED: Allow component placement if ANY pin touches an active row
+        # OR if component is adjacent to VIN/VOUT (can bridge to them via wires)
+        pins_touch_active = any(self.is_row_active(r) for r in pin_rows)
+
+        # Also allow if component is adjacent to VIN or VOUT rows (can be wired later)
+        adjacent_to_io = (
+            (pin_rows.start == self.VIN_ROW + 1) or  # Just after VIN
+            (pin_rows.stop - 1 == self.VOUT_ROW - 1)  # Just before VOUT
+        )
+
+        return pins_touch_active or adjacent_to_io
 
     def can_place_wire(self, r1: int, c1: int, r2: int, c2: int) -> bool:
         """
@@ -155,6 +170,25 @@ class Breadboard:
         """
         # Same row connections are not allowed
         if r1 == r2:
+            return False
+
+        # RELAXED: VIN can now connect to any component/position (not just MOSFET gates)
+        # This allows more circuit topologies to be explored
+        # if r1 == self.VIN_ROW and not self._is_mos_gate_cell(r2, c2):
+        #     return False
+        # if r2 == self.VIN_ROW and not self._is_mos_gate_cell(r1, c1):
+        #     return False
+
+        # FIXED: Prevent wires from landing on VIN/VOUT rows at columns != 0
+        # VIN and VOUT are at column 0, so wires to other columns on these rows
+        # would be on the same row but different electrical nets
+        if r1 == self.VIN_ROW and c1 != 0:
+            return False
+        if r2 == self.VIN_ROW and c2 != 0:
+            return False
+        if r1 == self.VOUT_ROW and c1 != 0:
+            return False
+        if r2 == self.VOUT_ROW and c2 != 0:
             return False
 
         # Check if positions are within bounds
@@ -174,6 +208,15 @@ class Breadboard:
             return False
 
         return True
+
+    def _is_mos_gate_cell(self, row: int, col: int) -> bool:
+        if not self._is_position_valid(row, col):
+            return False
+        cell = self.grid[row][col]
+        if cell is None:
+            return False
+        component, pin_index = cell
+        return component.type in ['nmos3', 'pmos3'] and pin_index == 1
 
     def _is_position_valid(self, row: int, col: int) -> bool:
         """
@@ -304,45 +347,8 @@ class Breadboard:
         Returns:
             True if all components are connected to the VIN-VOUT path
         """
-        if not self.vin_placed or not self.vout_placed:
-            return False
-
-        # Build the same position-to-net mapping used in netlist generation
-        position_to_net = self._build_net_mapping()
-
-        # Get VIN and VOUT components
-        vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
-        vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
-
-        if not vin_comp or not vout_comp:
-            return False
-
-        # Get the nets for VIN and VOUT
-        vin_net = position_to_net[vin_comp.pins[0]]
-        vout_net = position_to_net[vout_comp.pins[0]]
-
-        # Check VIN and VOUT are on the same net (connected)
-        if vin_net != vout_net:
-            return False
-
-        main_net = vin_net
-
-        # Check every non-wire component has at least one pin on the main net
-        for comp in self.placed_components:
-            if comp.type in ['vin', 'vout', 'wire']:
-                continue
-
-            # At least one pin must be connected to the main net
-            component_connected = False
-            for pin_pos in comp.pins:
-                if position_to_net[pin_pos] == main_net:
-                    component_connected = True
-                    break
-
-            if not component_connected:
-                return False  # Found a floating component
-
-        return True
+        summary = self._compute_connectivity_summary()
+        return summary.get("valid", False)
 
     def _validate_gate_base_connections(self) -> bool:
         """
@@ -504,7 +510,8 @@ class Breadboard:
         num_components = len([c for c in self.placed_components
                              if c.type not in ['wire', 'vin', 'vout']])
 
-        # Only allow STOP if circuit is complete AND has minimum complexity
+        # RELAXED: Remove rails_connected requirement
+        # Only allow STOP if circuit is complete and has minimum complexity
         if self.is_complete_and_valid() and num_components >= 1:
             actions.append(("STOP",))
 
@@ -705,18 +712,7 @@ class Breadboard:
                 else:
                     net_parent[root2] = root1
 
-        # First, union all pins of multi-pin components
-        # (component pins are inherently connected)
-        for comp in self.placed_components:
-            if comp.type in ['vin', 'vout', 'wire']:
-                continue
-            if len(comp.pins) > 1:
-                # Union all pins of this component together
-                first_net = position_to_net[comp.pins[0]]
-                for pin in comp.pins[1:]:
-                    union_nets(first_net, position_to_net[pin])
-
-        # Then apply wire connections
+        # Apply wire connections
         for pin1, pin2 in wire_connections:
             if pin1 in position_to_net and pin2 in position_to_net:
                 union_nets(position_to_net[pin1], position_to_net[pin2])
@@ -737,6 +733,122 @@ class Breadboard:
             if comp.type == 'wire' and len(comp.pins) == 2:
                 wire_connections.append((comp.pins[0], comp.pins[1]))
         return wire_connections
+
+    def get_connectivity_summary(self) -> Dict[str, object]:
+        """
+        Returns a summary of connectivity between VIN, VOUT, supply rails, and components.
+        """
+        return self._compute_connectivity_summary()
+
+    def _compute_connectivity_summary(self) -> Dict[str, object]:
+        summary: Dict[str, object] = {
+            "vin_present": self.vin_placed,
+            "vout_present": self.vout_placed,
+            "vin_net": None,
+            "vout_net": None,
+            "component_nets": set(),
+            "visited_nets": set(),
+            "touches_vdd": False,
+            "touches_vss": False,
+            "rails_in_component": {"VDD": False, "0": False},
+            "reachable_vout": False,
+            "all_components_reachable": False,
+            "has_active_components": False,
+            "vin_vout_distinct": True,
+            "degenerate_component": False,
+            "valid": False,
+        }
+
+        if not (self.vin_placed and self.vout_placed):
+            return summary
+
+        position_to_net = self._build_net_mapping()
+
+        vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
+        vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
+
+        if not vin_comp or not vout_comp:
+            return summary
+
+        vin_net = position_to_net[vin_comp.pins[0]]
+        vout_net = position_to_net[vout_comp.pins[0]]
+        summary["vin_net"] = vin_net
+        summary["vout_net"] = vout_net
+
+        if vin_net == vout_net:
+            summary["vin_vout_distinct"] = False
+            return summary
+
+        adjacency: Dict[str, Set[str]] = defaultdict(set)
+        component_nets: Set[str] = set()
+        touches_vdd = False
+        touches_vss = False
+        has_active_components = False
+
+        for comp in self.placed_components:
+            if comp.type in ['vin', 'vout', 'wire']:
+                continue
+
+            has_active_components = True
+            nets = {position_to_net[pin] for pin in comp.pins}
+
+            if len(nets) < 2:
+                summary["degenerate_component"] = True
+                return summary
+
+            if "VDD" in nets:
+                touches_vdd = True
+            if "0" in nets:
+                touches_vss = True
+
+            component_nets.update(nets)
+            nets_list = list(nets)
+
+            for i in range(len(nets_list)):
+                for j in range(i + 1, len(nets_list)):
+                    n1, n2 = nets_list[i], nets_list[j]
+                    adjacency[n1].add(n2)
+                    adjacency[n2].add(n1)
+
+        summary["has_active_components"] = has_active_components
+
+        if not has_active_components:
+            return summary
+
+        summary["touches_vdd"] = touches_vdd
+        summary["touches_vss"] = touches_vss
+
+        visited: Set[str] = set()
+        queue: deque[str] = deque([vin_net])
+        visited.add(vin_net)
+
+        while queue:
+            net = queue.popleft()
+            for neighbor in adjacency.get(net, ()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+
+        summary["visited_nets"] = visited
+        summary["reachable_vout"] = vout_net in visited
+        summary["all_components_reachable"] = component_nets.issubset(visited)
+        summary["rails_in_component"]["VDD"] = "VDD" in visited
+        summary["rails_in_component"]["0"] = "0" in visited
+
+        # RELAXED: Remove requirement that VDD/VSS must be reachable from VIN
+        # Old strict requirement required signal path through both power rails
+        # New requirement: just need to touch power rails and have VIN->VOUT path
+        summary["valid"] = (
+            touches_vdd and touches_vss and
+            summary["reachable_vout"] and
+            summary["all_components_reachable"]
+            # REMOVED overly strict requirements:
+            # and summary["rails_in_component"]["VDD"]
+            # and summary["rails_in_component"]["0"]
+        )
+
+        summary["component_nets"] = component_nets
+        return summary
 
     def _generate_netlist_header(self) -> List[str]:
         """Generates the netlist header comment."""

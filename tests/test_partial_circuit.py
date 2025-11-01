@@ -22,6 +22,16 @@ def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
     clamped_offset = max(0, min(offset, max_start - min_start))
     return min_start + clamped_offset
 
+
+def attach_vin_via_gate(board: Breadboard, target_row: int, target_col: int, driver_col: int = 5) -> Breadboard:
+    """Connect VIN to a target node through an NMOS gate interface."""
+    driver_row = min(target_row, board.WORK_END_ROW - 2)
+    board = board.apply_action(('nmos3', driver_row, driver_col))
+    board = board.apply_action(('wire', board.VIN_ROW, 0, driver_row + 1, driver_col))
+    board = board.apply_action(('wire', driver_row, driver_col, target_row, target_col))
+    board = board.apply_action(('wire', driver_row + 2, driver_col, target_row, target_col))
+    return board
+
 print("="*70)
 print("BUILDING PARTIAL CIRCUIT")
 print("="*70)
@@ -34,10 +44,10 @@ capacitor_row = choose_row(board, 6, height=2)
 
 print(f"\nStep 1: Place resistor at rows {resistor_row}-{resistor_row + 1} (column 1)")
 board = board.apply_action(('resistor', resistor_row, 1))
-print(f"  Resistor placed: {[c for c in board.placed_components if c.type == 'resistor']}")
+print(f"  Resistor placed: {[c for c in board.placed_components if c.type == 'resistor']}") 
 
-print(f"\nStep 2: Wire VIN ({board.VIN_ROW},0) to resistor top pin ({resistor_row},1)")
-board = board.apply_action(('wire', board.VIN_ROW, 0, resistor_row, 1))
+print(f"\nStep 2: Connect VIN to resistor node via MOS gate interface")
+board = attach_vin_via_gate(board, resistor_row, 1, driver_col=5)
 print("  Wire placed")
 
 print(f"\nStep 3: Place capacitor at rows {capacitor_row}-{capacitor_row + 1} (column 1)")
@@ -47,6 +57,18 @@ print(f"  Capacitor placed: {[c for c in board.placed_components if c.type == 'c
 print(f"\nStep 4: Wire resistor bottom ({resistor_row + 1},1) to capacitor top ({capacitor_row},1)")
 board = board.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))
 print("  Wire placed")
+
+# Add supply resistor from signal path to VDD (column 2)
+power_res_row = capacitor_row
+board = board.apply_action(('resistor', power_res_row, 2))
+board = board.apply_action(('wire', power_res_row, 2, capacitor_row, 1))
+board = board.apply_action(('wire', power_res_row + 1, 2, board.VDD_ROW, 0))
+
+# Add ground resistor from signal path to VSS (column 3)
+ground_res_row = capacitor_row
+board = board.apply_action(('resistor', ground_res_row, 3))
+board = board.apply_action(('wire', ground_res_row, 3, capacitor_row + 1, 1))
+board = board.apply_action(('wire', ground_res_row + 1, 3, board.VSS_ROW, 0))
 
 print("\n--- CIRCUIT IS ALMOST COMPLETE ---")
 print(f"Missing: Wire from capacitor bottom ({capacitor_row + 1},1) to VOUT ({board.VOUT_ROW},0)")
