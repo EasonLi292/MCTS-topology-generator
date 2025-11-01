@@ -62,12 +62,8 @@ def test_floating_component_detection():
     b = b.apply_action(('wire', resistor_row + 1, 1, b.VOUT_ROW, 0))
 
     # Circuit should NOT be valid because capacitor is floating
-    if b.is_complete_and_valid():
-        print("❌ FAILED: Floating component was not detected!")
-        return False
-    else:
-        print("✅ PASSED: Floating component correctly detected and rejected")
-        return True
+    assert not b.is_complete_and_valid(), "Floating component should be detected and rejected"
+    print("✅ PASSED: Floating component correctly detected and rejected")
 
 
 def test_gate_vdd_connection_prevention():
@@ -84,12 +80,8 @@ def test_gate_vdd_connection_prevention():
     gate_row = nmos_row + 1
     can_wire_gate_to_vdd = b.can_place_wire(gate_row, 1, b.VDD_ROW, 0)
 
-    if can_wire_gate_to_vdd:
-        print("❌ FAILED: Gate-to-VDD wire was allowed!")
-        return False
-    else:
-        print("✅ PASSED: Gate-to-VDD wire correctly prevented")
-        return True
+    assert not can_wire_gate_to_vdd, "Gate-to-VDD wire should be prevented"
+    print("✅ PASSED: Gate-to-VDD wire correctly prevented")
 
 
 def test_gate_vss_connection_prevention():
@@ -106,12 +98,8 @@ def test_gate_vss_connection_prevention():
     gate_row = pmos_row + 1
     can_wire_gate_to_vss = b.can_place_wire(gate_row, 1, b.VSS_ROW, 0)
 
-    if can_wire_gate_to_vss:
-        print("❌ FAILED: Gate-to-VSS wire was allowed!")
-        return False
-    else:
-        print("✅ PASSED: Gate-to-VSS wire correctly prevented")
-        return True
+    assert not can_wire_gate_to_vss, "Gate-to-VSS wire should be prevented"
+    print("✅ PASSED: Gate-to-VSS wire correctly prevented")
 
 
 def test_base_vdd_connection_prevention():
@@ -128,12 +116,8 @@ def test_base_vdd_connection_prevention():
     base_row = npn_row + 1
     can_wire_base_to_vdd = b.can_place_wire(base_row, 1, b.VDD_ROW, 0)
 
-    if can_wire_base_to_vdd:
-        print("❌ FAILED: Base-to-VDD wire was allowed!")
-        return False
-    else:
-        print("✅ PASSED: Base-to-VDD wire correctly prevented")
-        return True
+    assert not can_wire_base_to_vdd, "Base-to-VDD wire should be prevented"
+    print("✅ PASSED: Base-to-VDD wire correctly prevented")
 
 
 def test_base_vss_connection_prevention():
@@ -150,12 +134,8 @@ def test_base_vss_connection_prevention():
     base_row = pnp_row + 1
     can_wire_base_to_vss = b.can_place_wire(base_row, 1, b.VSS_ROW, 0)
 
-    if can_wire_base_to_vss:
-        print("❌ FAILED: Base-to-VSS wire was allowed!")
-        return False
-    else:
-        print("✅ PASSED: Base-to-VSS wire correctly prevented")
-        return True
+    assert not can_wire_base_to_vss, "Base-to-VSS wire should be prevented"
+    print("✅ PASSED: Base-to-VSS wire correctly prevented")
 
 
 def test_valid_circuit_with_all_connected():
@@ -193,15 +173,14 @@ def test_valid_circuit_with_all_connected():
     b = b.apply_action(('wire', ground_res_row + 1, 3, b.VSS_ROW, 0))       # Connect to ground
 
     # All components are connected, circuit should be valid
-    if b.is_complete_and_valid():
-        print("✅ PASSED: Valid circuit with all components connected is accepted")
-        return True
-    else:
+    is_valid = b.is_complete_and_valid()
+    if not is_valid:
         print("❌ FAILED: Valid circuit was rejected!")
         print(f"  VIN-VOUT connected: {b.find(b.VIN_ROW) == b.find(b.VOUT_ROW)}")
         print(f"  All components connected: {b._all_components_connected()}")
         print(f"  Gate/base validation: {b._validate_gate_base_connections()}")
-        return False
+    assert is_valid, "Valid circuit with all components connected should be accepted"
+    print("✅ PASSED: Valid circuit with all components connected is accepted")
 
 
 def test_transistor_circuit_with_valid_connections():
@@ -231,19 +210,15 @@ def test_transistor_circuit_with_valid_connections():
 
     # This should be valid - gate connected to VIN (not VDD/VSS)
     gate_validation = b._validate_gate_base_connections()
+    assert gate_validation, "Valid gate connection should not be rejected"
 
-    if not gate_validation:
-        print("❌ FAILED: Valid gate connection was incorrectly rejected!")
-        return False
-
-    if b.is_complete_and_valid():
-        print("✅ PASSED: Transistor with valid gate connection is accepted")
-        return True
-    else:
+    is_valid = b.is_complete_and_valid()
+    if not is_valid:
         print("❌ FAILED: Valid transistor circuit was rejected!")
         print(f"  Gate/base validation: {gate_validation}")
         print(f"  All components connected: {b._all_components_connected()}")
-        return False
+    assert is_valid, "Transistor with valid gate connection should be accepted"
+    print("✅ PASSED: Transistor with valid gate connection is accepted")
 
 
 def test_partial_circuit_not_valid():
@@ -258,12 +233,56 @@ def test_partial_circuit_not_valid():
     b = attach_vin_via_gate(b, resistor_row, 1, driver_col=6)
     # (Don't connect to VOUT)
 
-    if b.is_complete_and_valid():
-        print("❌ FAILED: Incomplete circuit was accepted!")
-        return False
-    else:
-        print("✅ PASSED: Incomplete circuit correctly rejected")
-        return True
+    assert not b.is_complete_and_valid(), "Incomplete circuit should be rejected"
+    print("✅ PASSED: Incomplete circuit correctly rejected")
+
+
+def test_vin_short_to_power_rail_prevents_netlist():
+    """Ensure VIN shorted to ground is detected and blocks netlist generation."""
+    print("\n=== Test 9: VIN Short to Ground Detection ===")
+
+    b = Breadboard()
+    mid_row = choose_row(b, 2, height=1)
+    b = b.apply_action(('wire', b.VIN_ROW, 0, mid_row, 0))
+    b = b.apply_action(('wire', mid_row, 0, b.VSS_ROW, 0))
+
+    summary = b.get_connectivity_summary()
+    is_complete = b.is_complete_and_valid()
+    netlist = b.to_netlist()
+
+    if not (summary.get("vin_on_power_rail") and not is_complete and netlist is None):
+        print("❌ FAILED: VIN short was not properly detected")
+        print(f"  vin_on_power_rail: {summary.get('vin_on_power_rail')}")
+        print(f"  Circuit valid: {is_complete}")
+        print(f"  Netlist generated: {bool(netlist)}")
+    assert summary.get("vin_on_power_rail"), "VIN short to power rail should be detected"
+    assert not is_complete, "Circuit with VIN short should not be complete"
+    assert netlist is None, "Netlist should not be generated for VIN short"
+    print("✅ PASSED: VIN short detected; circuit rejected before netlist generation")
+
+
+def test_vout_short_to_power_rail_prevents_netlist():
+    """Ensure VOUT shorted to VDD is detected and blocks netlist generation."""
+    print("\n=== Test 10: VOUT Short to VDD Detection ===")
+
+    b = Breadboard()
+    mid_row = choose_row(b, 6, height=1)
+    b = b.apply_action(('wire', b.VOUT_ROW, 0, mid_row, 0))
+    b = b.apply_action(('wire', mid_row, 0, b.VDD_ROW, 0))
+
+    summary = b.get_connectivity_summary()
+    is_complete = b.is_complete_and_valid()
+    netlist = b.to_netlist()
+
+    if not (summary.get("vout_on_power_rail") and not is_complete and netlist is None):
+        print("❌ FAILED: VOUT short was not properly detected")
+        print(f"  vout_on_power_rail: {summary.get('vout_on_power_rail')}")
+        print(f"  Circuit valid: {is_complete}")
+        print(f"  Netlist generated: {bool(netlist)}")
+    assert summary.get("vout_on_power_rail"), "VOUT short to power rail should be detected"
+    assert not is_complete, "Circuit with VOUT short should not be complete"
+    assert netlist is None, "Netlist should not be generated for VOUT short"
+    print("✅ PASSED: VOUT short detected; circuit rejected before netlist generation")
 
 
 def run_all_tests():
@@ -281,6 +300,8 @@ def run_all_tests():
         test_valid_circuit_with_all_connected,
         test_transistor_circuit_with_valid_connections,
         test_partial_circuit_not_valid,
+        test_vin_short_to_power_rail_prevents_netlist,
+        test_vout_short_to_power_rail_prevents_netlist,
     ]
 
     results = []

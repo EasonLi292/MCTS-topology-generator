@@ -12,6 +12,7 @@ import tempfile
 import os
 import subprocess
 import re
+import shutil
 from typing import Optional, Tuple
 
 # Set library path for ngspice before importing PySpice
@@ -19,12 +20,15 @@ os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LI
 
 # Import the Circuit class from PySpice
 try:
-    from PySpice.Spice.Netlist import Circuit
-    from PySpice.Spice.NgSpice.Shared import NgSpiceShared
+    from PySpice.Spice.Netlist import Circuit  # noqa: F401
+    from PySpice.Spice.NgSpice.Shared import NgSpiceShared  # noqa: F401
     PYSPICE_AVAILABLE = True
 except ImportError as e:
     PYSPICE_AVAILABLE = False
     print(f"Warning: PySpice not available: {e}")
+
+DEFAULT_NGSPICE_PATH = '/opt/homebrew/bin/ngspice'
+NGSPICE_BINARY = os.environ.get('NGSPICE_BINARY') or shutil.which('ngspice') or DEFAULT_NGSPICE_PATH
 
 def run_ac_simulation(netlist: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
@@ -38,16 +42,16 @@ def run_ac_simulation(netlist: str) -> Tuple[Optional[np.ndarray], Optional[np.n
     Returns:
         Tuple of (frequencies, complex_voltages) or (None, None) if simulation fails
     """
-    if not PYSPICE_AVAILABLE:
-        # Mock implementation for testing without PySpice
-        return None, None
-
     try:
+        if not NGSPICE_BINARY or not os.path.exists(NGSPICE_BINARY):
+            print(f"SPICE Warning: ngspice binary not found (expected at {NGSPICE_BINARY}).")
+            return None, None
+
         # Write netlist to temporary file
         netlist_path = _write_netlist_to_file(netlist)
 
         # Run ngspice simulation
-        output = _run_ngspice(netlist_path)
+        output = _run_ngspice(netlist_path, NGSPICE_BINARY)
 
         # Clean up temporary file
         os.unlink(netlist_path)
@@ -82,7 +86,7 @@ def _write_netlist_to_file(netlist: str) -> str:
         return f.name
 
 
-def _run_ngspice(netlist_path: str) -> Optional[str]:
+def _run_ngspice(netlist_path: str, ngspice_binary: str) -> Optional[str]:
     """
     Runs ngspice in batch mode on a netlist file.
 
@@ -93,7 +97,7 @@ def _run_ngspice(netlist_path: str) -> Optional[str]:
         Simulation output string, or None if simulation failed
     """
     result = subprocess.run(
-        ['/opt/homebrew/bin/ngspice', '-b', netlist_path],
+        [ngspice_binary, '-b', netlist_path],
         capture_output=True,
         text=True,
         timeout=5

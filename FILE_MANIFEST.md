@@ -37,16 +37,21 @@ utils/
 ```
 tests/
 ├── README.md                           # Test documentation
-├── test_mcts_fixes.py          (62 lines)   # MCTS core tests (5 tests)
-├── test_validation_rules.py   (246 lines)   # Validation tests (8 tests)
-├── test_mcts_search.py         (71 lines)   # Integration test
-├── test_rc_filter_reward.py   (176 lines)   # RC filter SPICE test
-├── test_inverter_reward.py    (139 lines)   # CMOS inverter test
-├── test_inverter_with_load.py (162 lines)   # Inverter with load test
-└── test_augmentation.py       (260 lines)   # Augmentation tests
+├── test_almost_complete.py    (249 lines)   # Almost-complete circuit scenarios
+├── test_augmentation.py       (312 lines)   # Symmetry tests
+├── test_inverter_reward.py    (228 lines)   # CMOS inverter test
+├── test_inverter_with_load.py (238 lines)   # Inverter with load test & SPICE run
+├── test_mcts_fixes.py          (66 lines)   # MCTS core regression tests
+├── test_mcts_search.py         (75 lines)   # Integration test
+├── test_netlist_output.py      (90 lines)   # Netlist export / ngspice sanity check
+├── test_partial_circuit.py    (177 lines)   # Guided completion harness
+├── test_rc_filter_reward.py   (211 lines)   # RC filter SPICE test
+├── test_transistor_bridge_reward.py (86 lines) # Regression for transistor bridge reward floor
+├── test_validation_rules.py   (364 lines)   # Validation rules (10 tests)
+└── test_winning_wire_reward.py (82 lines)   # Winning wire reward scenario
 ```
 
-**Total: 1,116 lines of test code**
+**Total: 2,092 lines of test code**
 
 ## Examples (`examples/`)
 
@@ -80,17 +85,17 @@ docs/
 |------|-------|---------------|
 | Python (core) | 4 | 2,206 |
 | Python (utils) | 1 | 256 |
-| Python (tests) | 7 | 1,116 |
+| Python (tests) | 11 | 2,092 |
 | Markdown (docs) | 12 | ~5,000 |
-| SPICE netlists | 3 | N/A |
-| **Total Python** | **12** | **3,578** |
+| SPICE netlists (examples) | 3 | N/A |
+| **Total Python** | **16** | **4,554** |
 
 ### By Purpose
 
 | Purpose | Files | Lines |
 |---------|-------|-------|
 | Algorithm Implementation | 4 | 2,206 |
-| Testing & Validation | 7 | 1,116 |
+| Testing & Validation | 11 | 2,092 |
 | Utilities | 1 | 256 |
 | Documentation | 12 | ~5,000 |
 | Examples | 3 | N/A |

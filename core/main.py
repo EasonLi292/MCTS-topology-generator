@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+from pathlib import Path
 from typing import Tuple
 from topology_game_board import Breadboard
 from MCTS import MCTS
@@ -229,9 +230,12 @@ def _write_netlist_to_file(netlist: str, filename: str):
         netlist: SPICE netlist string
         filename: Output file path
     """
-    with open(filename, 'w') as f:
+    output_dir = Path(__file__).resolve().parent.parent / "outputs"
+    output_dir.mkdir(exist_ok=True)
+    filepath = output_dir / filename
+    with open(filepath, 'w') as f:
         f.write(netlist)
-    print(f"\nNetlist saved to: {filename}")
+    print(f"\nNetlist saved to: {filepath}")
 
 
 def _print_completion():

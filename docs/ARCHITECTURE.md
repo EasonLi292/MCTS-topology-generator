@@ -208,8 +208,8 @@ python3 main.py --iterations 10000 --exploration 1.0 --board-rows 20 --verbose
 **Output:**
 - Search progress with SPICE statistics
 - Best circuit action sequence
-- Generated SPICE netlist (`generated_circuit.sp`)
-- Best candidate circuit (`best_candidate_circuit.sp`)
+- Generated SPICE netlist (`outputs/generated_circuit.sp`)
+- Best candidate circuit (`outputs/best_candidate_circuit.sp`)
 
 ## Project Structure
 
@@ -219,12 +219,11 @@ MCTS-topology-generator/
 │   ├── main.py                      # CLI entry point
 │   ├── MCTS.py                      # MCTS algorithm
 │   ├── topology_game_board.py       # Breadboard state & validation
-│   ├── spice_simulator.py           # SPICE interface & rewards
-│   ├── test_validation_rules.py     # Validation tests
-│   ├── test_inverter_with_load.py   # CMOS inverter test
-│   └── test_rc_filter_reward.py     # RC filter test
+│   └── spice_simulator.py           # SPICE interface & rewards
+├── tests/                           # Comprehensive test suites
 ├── utils/
 │   └── augmentation.py              # Circuit symmetry utilities
+├── outputs/                         # Generated SPICE netlists (git-ignored)
 ├── README.md                        # Usage documentation
 ├── PROJECT_OVERVIEW.md              # This file
 └── VALIDATION_RULES_SUMMARY.md      # Validation details

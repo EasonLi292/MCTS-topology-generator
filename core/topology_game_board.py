@@ -191,6 +191,15 @@ class Breadboard:
         if r2 == self.VOUT_ROW and c2 != 0:
             return False
 
+        forbidden_pairs = [
+            {(self.VIN_ROW, 0), (self.VSS_ROW, 0)},
+            {(self.VOUT_ROW, 0), (self.VDD_ROW, 0)},
+        ]
+        endpoints = { (r1, c1), (r2, c2) }
+        for pair in forbidden_pairs:
+            if endpoints == pair:
+                return False
+
         # Check if positions are within bounds
         if not self._is_position_valid(r1, c1) or not self._is_position_valid(r2, c2):
             return False
@@ -607,11 +616,11 @@ class Breadboard:
 
         # Generate netlist sections
         lines = self._generate_netlist_header()
+        lines.extend(self._generate_device_models())  # Models must be defined before components
         lines.extend(self._generate_power_supply())
         lines.extend(self._generate_input_source(position_to_net))
         lines.extend(self._generate_circuit_components(position_to_net))
         lines.extend(self._generate_output_probe(position_to_net))
-        lines.extend(self._generate_device_models())
         lines.extend(self._generate_simulation_commands())
 
         return "\n".join(lines)
@@ -756,6 +765,8 @@ class Breadboard:
             "has_active_components": False,
             "vin_vout_distinct": True,
             "degenerate_component": False,
+            "vin_on_power_rail": False,
+            "vout_on_power_rail": False,
             "valid": False,
         }
 
@@ -774,6 +785,14 @@ class Breadboard:
         vout_net = position_to_net[vout_comp.pins[0]]
         summary["vin_net"] = vin_net
         summary["vout_net"] = vout_net
+
+        if vin_net in {"0", "VDD"}:
+            summary["vin_on_power_rail"] = True
+            return summary
+
+        if vout_net in {"0", "VDD"}:
+            summary["vout_on_power_rail"] = True
+            return summary
 
         if vin_net == vout_net:
             summary["vin_vout_distinct"] = False
@@ -941,12 +960,16 @@ class Breadboard:
             comp_counters: Dictionary tracking component counts
 
         Returns:
-            Component ID string (e.g., "R1", "M2")
+            Component ID string (e.g., "R1", "M2", "Q1")
         """
         # MOSFETs must use 'M' prefix in SPICE
         if comp_type in ['nmos3', 'pmos3']:
             comp_prefix = 'M'
             counter_key = 'mosfet'  # Unified counter for all MOSFETs
+        # BJTs (both NPN and PNP) must use 'Q' prefix in SPICE
+        elif comp_type in ['npn', 'pnp']:
+            comp_prefix = 'Q'
+            counter_key = 'bjt'  # Unified counter for all BJTs
         else:
             comp_prefix = comp_type[0].upper()
             counter_key = comp_type

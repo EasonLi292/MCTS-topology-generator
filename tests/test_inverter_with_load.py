@@ -26,6 +26,7 @@ This is a CMOS inverter with a pull-down resistor load for better output charact
 
 import sys
 import os
+import tempfile
 # Add core directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
 
@@ -152,10 +153,11 @@ def analyze_circuit(board):
             print(netlist)
             print("-" * 70)
 
-            # Save netlist
-            with open('inverter_with_load.sp', 'w') as f:
-                f.write(netlist)
-            print("\n💾 Netlist saved to: inverter_with_load.sp")
+            # Save netlist to a temporary file for debugging purposes
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sp', prefix='inverter_with_load_', delete=False) as tmp:
+                tmp.write(netlist)
+                temp_path = tmp.name
+            print(f"\n💾 Netlist saved to: {temp_path}")
 
             # Try to run SPICE simulation
             print("\n🔧 Running SPICE AC simulation...")
@@ -184,6 +186,11 @@ def analyze_circuit(board):
                 fallback_reward = max(0.01, heuristic_reward * 0.1)
                 print(f"  Fallback reward: {fallback_reward:.4f}")
                 return fallback_reward, netlist
+            finally:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
         else:
             print("  ❌ Failed to generate netlist")
             return 0.0, None

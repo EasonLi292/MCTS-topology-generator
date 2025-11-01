@@ -101,10 +101,11 @@ User Input → main.py
 
 ## Example Output
 
-See `examples/` directory for:
-- `best_candidate_circuit.sp` - Highest reward circuit found
-- `generated_circuit.sp` - Final circuit from search
-- Sample SPICE netlists in standard format
+See `examples/` for static sample netlists.
+
+When you run `python3 core/main.py`, fresh artifacts are written to `outputs/`:
+- `outputs/best_candidate_circuit.sp` - Highest reward circuit found
+- `outputs/generated_circuit.sp` - Final circuit from search
 
 ## Questions?
 

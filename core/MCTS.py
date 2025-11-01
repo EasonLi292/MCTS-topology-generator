@@ -7,6 +7,10 @@ import random
 from topology_game_board import Breadboard
 from spice_simulator import run_ac_simulation, calculate_reward_from_simulation
 
+# Reward tuning constants
+INCOMPLETE_REWARD_CAP = 40.0
+COMPLETION_BASELINE_REWARD = 45.0
+
 
 class MCTSNode:
     """
@@ -219,9 +223,8 @@ class MCTS:
             return self._evaluate_with_spice(state, metrics, heuristic_reward, stats)
         else:
             # Incomplete circuit: use heuristic only (always positive)
-            # IMPORTANT: Cap at 49.0 to ensure completed circuits ALWAYS score higher
-            # Even trivial completed circuits get 50.0+, ensuring MCTS prefers completion
-            return max(0.0, min(heuristic_reward, 49.0))
+            # Cap lower than completed baseline so MCTS still prefers completion
+            return max(0.0, min(heuristic_reward, INCOMPLETE_REWARD_CAP))
 
     def _calculate_circuit_metrics(self, state: Breadboard) -> dict:
         """
@@ -274,6 +277,10 @@ class MCTS:
             'touches_vss': connectivity.get('touches_vss', False),
             'supply_connected': supply_connected,
             'has_active_components': connectivity.get('has_active_components', False),
+            'vin_on_power_rail': connectivity.get('vin_on_power_rail', False),
+            'vout_on_power_rail': connectivity.get('vout_on_power_rail', False),
+            'degenerate_component': connectivity.get('degenerate_component', False),
+            'vin_vout_distinct': connectivity.get('vin_vout_distinct', True),
             'connectivity': connectivity
         }
 
@@ -319,6 +326,14 @@ class MCTS:
         connection_bonus = self._calculate_connection_bonus(metrics)
         conn = metrics.get('connectivity', {})
 
+        # Heavy penalties for invalid power-rail placements or degenerate structures
+        if metrics.get('vin_on_power_rail') or metrics.get('vout_on_power_rail'):
+            return -25.0
+        if not metrics.get('vin_vout_distinct', True):
+            return -20.0
+        if metrics.get('degenerate_component'):
+            return -15.0
+
         # Reward component count and diversity
         heuristic_reward = (metrics['num_components'] * 5.0) + \
                           (metrics['unique_types'] * 8.0) + \
@@ -354,8 +369,8 @@ class MCTS:
         netlist = state.to_netlist()
         if not netlist:
             # Netlist generation failed - but it's still a complete circuit
-            # Give it a baseline reward higher than any incomplete circuit
-            return 50.0
+            # Give it a baseline reward higher than any incomplete circuit (if component count justifies it)
+            return self._baseline_completion_reward(metrics['num_components'])
 
         try:
             # Run the full SPICE simulation and scoring
@@ -369,13 +384,13 @@ class MCTS:
                 # SPICE failed or returned 0 - but it's still a complete circuit
                 # Give baseline reward higher than incomplete circuits
                 stats.record_spice_failure()
-                return 50.0
+                return self._baseline_completion_reward(metrics['num_components'])
 
         except Exception as e:
             # SPICE simulation crashed - but it's still a complete circuit
             # Give baseline reward higher than incomplete circuits
             stats.record_spice_failure()
-            return 50.0
+            return self._baseline_completion_reward(metrics['num_components'])
 
     def _calculate_final_reward(self, spice_reward: float, metrics: dict,
                                 stats: CircuitStatistics) -> float:
@@ -397,11 +412,16 @@ class MCTS:
         # Add complexity bonus to encourage diverse, multi-component circuits
         reward = spice_reward + complexity_bonus
 
-        # Ensure completed circuits ALWAYS score higher than incomplete (capped at 49.0)
-        reward = max(reward, 50.0)
+        # Ensure completed circuits ALWAYS score higher than incomplete (capped at INCOMPLETE_REWARD_CAP)
+        baseline_reward = self._baseline_completion_reward(metrics['num_components'])
+        reward = max(reward, baseline_reward)
 
         stats.record_spice_success(reward)
         return reward
+
+    def _baseline_completion_reward(self, num_components: int) -> float:
+        """Computes the minimum reward assigned to a completed circuit."""
+        return COMPLETION_BASELINE_REWARD + max(0, num_components)
 
     def _update_best_candidate(self, state: Breadboard, reward: float):
         """

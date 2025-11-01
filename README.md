@@ -81,7 +81,7 @@ python3 main.py --iterations 20000 --exploration 1.5 --board-rows 20 --verbose
 The program outputs:
 1. **Search progress**: Shows SPICE simulation success/failure rates and max reward
 2. **Best circuit found**: Action sequence to build the circuit
-3. **SPICE netlist**: Generated in `generated_circuit.sp`
+3. **SPICE netlists**: Written to the git-ignored `outputs/` directory
 
 Example output:
 ```
@@ -108,11 +108,7 @@ Average reward: 7.0100
   2. ('wire', 5, 0, 5, 1)
   3. ('wire', 6, 1, 20, 0)
 
-Final circuit:
-  Components: 1
-  Complete: True
-
-Netlist saved to: generated_circuit.sp
+Netlist saved to: outputs/generated_circuit.sp
 ```
 
 ## Project Structure
@@ -127,11 +123,15 @@ MCTS-topology-generator/
 ├── utils/                       # Utility modules
 │   └── augmentation.py          # Circuit symmetry and augmentation
 ├── tests/                       # Comprehensive test suite
-│   ├── test_mcts_fixes.py       # MCTS core functionality tests
+│   ├── test_almost_complete.py  # Almost-finished circuit scenarios
+│   ├── test_netlist_output.py   # Netlist export sanity check
 │   ├── test_validation_rules.py # Circuit validation tests
 │   ├── test_mcts_search.py      # Integration tests
 │   └── ...                      # Additional circuit-specific tests
 ├── examples/                    # Example SPICE netlists
+│   ├── best_candidate_circuit.sp
+│   └── generated_circuit.sp
+├── outputs/                     # Generated SPICE netlists (ignored by git)
 │   ├── best_candidate_circuit.sp
 │   └── generated_circuit.sp
 ├── docs/                        # Detailed documentation
@@ -190,7 +190,7 @@ A circuit is complete when:
 
 **SPICE simulation failures**
 - Check ngspice is working: `ngspice --version`
-- Review `generated_circuit.sp` for malformed netlist
+- Review `outputs/generated_circuit.sp` for malformed netlist
 - Some component configurations may be invalid (expected behavior)
 
 ## Code Quality

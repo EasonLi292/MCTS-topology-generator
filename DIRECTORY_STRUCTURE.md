@@ -17,19 +17,26 @@ MCTS-topology-generator/
 │
 ├── tests/                       # Comprehensive test suite
 │   ├── README.md                # Test documentation
-│   ├── test_mcts_fixes.py       # MCTS core functionality (5 tests)
-│   ├── test_validation_rules.py # Circuit validation (8 tests)
-│   ├── test_mcts_search.py      # Integration test
-│   ├── test_rc_filter_reward.py # RC filter SPICE test
+│   ├── test_almost_complete.py  # Almost-finished circuit scenarios
+│   ├── test_augmentation.py     # Symmetry tests
 │   ├── test_inverter_reward.py  # CMOS inverter test
 │   ├── test_inverter_with_load.py
-│   └── test_augmentation.py     # Symmetry tests
+│   ├── test_mcts_fixes.py       # MCTS core functionality (5 tests)
+│   ├── test_mcts_search.py      # Integration test
+│   ├── test_netlist_output.py   # Netlist export sanity check
+│   ├── test_rc_filter_reward.py # RC filter SPICE test
+│   ├── test_validation_rules.py # Circuit validation (10 tests)
+│   └── test_winning_wire_reward.py
 │
-├── examples/                    # Example outputs
+├── examples/                    # Example outputs (static)
 │   ├── README.md                # Examples documentation
 │   ├── best_candidate_circuit.sp
 │   ├── generated_circuit.sp
 │   └── inverter_with_load.sp
+│
+├── outputs/                     # Generated artifacts (git-ignored)
+│   ├── best_candidate_circuit.sp
+│   └── generated_circuit.sp
 │
 └── docs/                        # Detailed documentation
     ├── README.md                # Documentation index
@@ -46,9 +53,10 @@ MCTS-topology-generator/
 
 - **Core modules**: 4 Python files
 - **Utilities**: 1 Python file
-- **Tests**: 7 test files
+- **Tests**: 10 Python test files
 - **Documentation**: 8 markdown files + 4 READMEs
 - **Examples**: 3 SPICE netlists
+- **Outputs**: Auto-generated SPICE netlists (ignored by git)
 
 ## Navigation Guide
 
@@ -64,7 +72,8 @@ MCTS-topology-generator/
 - Check `tests/test_mcts_search.py` for integration test
 
 ### For Circuit Examples
-- Browse `examples/` for SPICE netlists
+- Browse `examples/` for static SPICE netlists
+- After running `core/main.py`, inspect `outputs/` for freshly generated netlists
 - Review `examples/README.md` for netlist format
 
 ### For Technical Details

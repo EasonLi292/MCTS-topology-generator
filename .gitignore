@@ -20,6 +20,7 @@ env/
 
 # Generated SPICE files (except examples)
 core/*.sp
+outputs/
 *.sp
 
 # OS

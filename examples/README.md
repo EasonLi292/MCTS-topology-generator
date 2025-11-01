@@ -16,6 +16,8 @@ You can view these netlists in any text editor and simulate them with ngspice:
 ngspice best_candidate_circuit.sp
 ```
 
+When you run the CLI (`python3 core/main.py`), fresh artifacts are written to `../outputs/`.
+
 ## Netlist Format
 
 All netlists follow standard SPICE format:

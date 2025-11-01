@@ -40,10 +40,24 @@ def get_min_max_rows(board: Breadboard) -> Tuple[int, int]:
     max_row = 0
 
     for comp in board.placed_components:
+        # Skip VIN and VOUT components as they are fixed
+        if comp.type in ['vin', 'vout']:
+            continue
+
         for row, col in comp.pins:
-            # Include all components in the range calculation
-            min_row = min(min_row, row)
-            max_row = max(max_row, row)
+            # For wires, skip endpoints that are at VIN/VOUT positions
+            if comp.type == 'wire':
+                if row == board.VIN_ROW or row == board.VOUT_ROW:
+                    continue
+
+            # Only consider rows in the work area
+            if board.WORK_START_ROW <= row <= board.WORK_END_ROW:
+                min_row = min(min_row, row)
+                max_row = max(max_row, row)
+
+    # If no components in work area, return work area bounds
+    if min_row == board.ROWS or max_row == 0:
+        return (board.WORK_START_ROW, board.WORK_END_ROW)
 
     return (min_row, max_row)
 
@@ -79,37 +93,49 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
     new_board.placed_wires = set()
 
     # Translate and place each component
+    # Process VIN/VOUT first to ensure they're placed before wires
     for comp in board.placed_components:
-        # VIN and VOUT are fixed at specific rows - don't translate them
         if comp.type in ['vin', 'vout']:
-            # Keep VIN/VOUT at their original positions
-            new_pins = comp.pins
-        elif comp.type == 'wire':
+            new_board._place_component(comp.type, comp.pins[0][0], comp.pins[0][1])
+            if comp.type == 'vin':
+                new_board.vin_placed = True
+            elif comp.type == 'vout':
+                new_board.vout_placed = True
+
+    # Then process non-wire components
+    for comp in board.placed_components:
+        if comp.type not in ['vin', 'vout', 'wire']:
+            # Translate the component
+            new_pins = [(r + row_offset, c) for r, c in comp.pins]
+
+            # Check if translation is valid (within bounds)
+            for r, c in new_pins:
+                if not (0 <= r < board.ROWS and 0 <= c < board.COLUMNS):
+                    return None  # Translation out of bounds
+
+            new_board._place_component(comp.type, new_pins[0][0], new_pins[0][1])
+
+    # Finally process wires
+    for comp in board.placed_components:
+        if comp.type == 'wire':
             # For wires, translate each endpoint independently
-            # but keep VIN_ROW and VOUT_ROW fixed
+            # but keep VIN_ROW, VOUT_ROW, VSS_ROW, and VDD_ROW fixed
             new_pins = []
             for r, c in comp.pins:
-                if r == board.VIN_ROW or r == board.VOUT_ROW:
-                    # Keep VIN/VOUT connection points fixed
+                if r in [board.VIN_ROW, board.VOUT_ROW, board.VSS_ROW, board.VDD_ROW]:
+                    # Keep fixed connection points unchanged
                     new_pins.append((r, c))
                 else:
                     # Translate other wire endpoints
                     new_pins.append((r + row_offset, c))
-        else:
-            # Translate all other components
-            new_pins = [(r + row_offset, c) for r, c in comp.pins]
 
-        # Check if translation is valid (within bounds)
-        for r, c in new_pins:
-            if not (0 <= r < board.ROWS and 0 <= c < board.COLUMNS):
-                return None  # Translation out of bounds
+            # Check if translation is valid (within bounds)
+            for r, c in new_pins:
+                if not (0 <= r < board.ROWS and 0 <= c < board.COLUMNS):
+                    return None  # Translation out of bounds
 
-        # Place the translated component
-        if comp.type == 'wire':
             new_board._place_wire(new_pins[0][0], new_pins[0][1],
                                   new_pins[1][0], new_pins[1][1])
-        else:
-            new_board._place_component(comp.type, new_pins[0][0], new_pins[0][1])
 
     return new_board
 
