@@ -56,16 +56,29 @@ class Component:
 # Breadboard Class
 # ============================================================
 class Breadboard:
-    ROWS = 30
-    COLUMNS = 8
-    VSS_ROW = 0
-    VDD_ROW = 29
-    VIN_ROW = 1
-    VOUT_ROW = 28
-    WORK_START_ROW = 2
-    WORK_END_ROW = 27
+    DEFAULT_ROWS = 30
+    DEFAULT_COLUMNS = 8
+    MIN_ROWS = 6  # Need VIN, VOUT, power rails, and at least one work row
 
-    def __init__(self):
+    def __init__(self, rows: int = DEFAULT_ROWS, columns: int = DEFAULT_COLUMNS):
+        if rows < self.MIN_ROWS:
+            raise ValueError(f"Breadboard requires at least {self.MIN_ROWS} rows (got {rows})")
+        if columns < 2:
+            raise ValueError(f"Breadboard requires at least 2 columns (got {columns})")
+
+        # Board dimensions (stored per-instance so tests/CLI can customize them)
+        self.ROWS = rows
+        self.COLUMNS = columns
+        self.VSS_ROW = 0
+        self.VDD_ROW = rows - 1
+        self.VIN_ROW = 1
+        self.VOUT_ROW = rows - 2
+        self.WORK_START_ROW = 2
+        self.WORK_END_ROW = rows - 3
+
+        if self.WORK_END_ROW < self.WORK_START_ROW:
+            raise ValueError("Breadboard needs at least one work row between VIN/VOUT and power rails")
+
         self.grid: List[List[Optional[Tuple['Component', int]]]] = [
             [None for _ in range(self.COLUMNS)] for _ in range(self.ROWS)
         ]
@@ -118,9 +131,8 @@ class Breadboard:
         pin_rows = range(start_row, start_row + info.pin_count)
 
         # Allow components to span from VIN/VOUT rows into work area
-        # VIN_ROW (1) and VOUT_ROW (28) are valid starting positions
-        min_allowed_row = self.VIN_ROW  # Allow starting from row 1
-        max_allowed_row = self.VOUT_ROW  # Allow ending at row 28
+        min_allowed_row = self.VIN_ROW  # Allow starting from VIN row
+        max_allowed_row = self.VOUT_ROW  # Allow ending at VOUT row
         if not (min_allowed_row <= pin_rows.start and pin_rows.stop - 1 <= max_allowed_row):
             return False
 
@@ -540,6 +552,14 @@ class Breadboard:
 
     def clone(self) -> "Breadboard":
         new_board = self.__class__.__new__(self.__class__)
+        new_board.ROWS = self.ROWS
+        new_board.COLUMNS = self.COLUMNS
+        new_board.VSS_ROW = self.VSS_ROW
+        new_board.VDD_ROW = self.VDD_ROW
+        new_board.VIN_ROW = self.VIN_ROW
+        new_board.VOUT_ROW = self.VOUT_ROW
+        new_board.WORK_START_ROW = self.WORK_START_ROW
+        new_board.WORK_END_ROW = self.WORK_END_ROW
         new_board.grid = copy.deepcopy(self.grid)
         new_board.placed_components = copy.deepcopy(self.placed_components)
         new_board.component_counter = self.component_counter

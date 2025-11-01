@@ -22,20 +22,22 @@ def main():
     # Parse command-line arguments
     args = _parse_arguments()
 
+    # Prepare initial board (customizable dimensions)
+    initial_board = Breadboard(rows=args.board_rows)
+
     # Display header
     _print_header(args)
 
     # Initialize and run MCTS
-    mcts = _initialize_mcts()
+    mcts = _initialize_mcts(initial_board)
     _run_mcts_search(mcts, args.iterations)
 
     # Get and display results
-    initial_board = Breadboard()
     path, reward = mcts.get_best_solution()
     _display_search_results(path, reward)
 
     # Reconstruct and save final circuit
-    final_board = _reconstruct_circuit(initial_board, path, args.verbose)
+    final_board = _reconstruct_circuit(initial_board.clone(), path, args.verbose)
     _save_final_circuit(final_board)
 
     # Save best candidate circuit
@@ -57,6 +59,8 @@ def _parse_arguments() -> argparse.Namespace:
                         help='Number of MCTS iterations to run (default: 10000)')
     parser.add_argument('--exploration', type=float, default=1.0,
                         help='UCT exploration constant (default: 1.0)')
+    parser.add_argument('--board-rows', type=int, default=15,
+                        help='Number of rows available on the breadboard (default: 15)')
     parser.add_argument('--verbose', action='store_true',
                         help='Print verbose output')
     return parser.parse_args()
@@ -74,17 +78,20 @@ def _print_header(args: argparse.Namespace):
     print("="*70)
     print(f"Iterations: {args.iterations}")
     print(f"Exploration constant: {args.exploration}")
+    print(f"Breadboard rows: {args.board_rows}")
     print("="*70)
 
 
-def _initialize_mcts() -> MCTS:
+def _initialize_mcts(initial_board: Breadboard) -> MCTS:
     """
     Initializes the MCTS algorithm with a fresh breadboard.
+
+    Args:
+        initial_board: Starting breadboard state
 
     Returns:
         Initialized MCTS instance
     """
-    initial_board = Breadboard()
     return MCTS(initial_board)
 
 

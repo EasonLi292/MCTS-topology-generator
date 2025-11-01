@@ -20,6 +20,15 @@ from topology_game_board import Breadboard
 from spice_simulator import run_ac_simulation, calculate_reward_from_simulation
 import numpy as np
 
+def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
+    """Select a valid starting row for component placement within the work area."""
+    min_start = board.WORK_START_ROW
+    max_start = board.WORK_END_ROW - (height - 1)
+    if max_start < min_start:
+        raise ValueError("Breadboard does not have enough rows for this component")
+    clamped_offset = max(0, min(offset, max_start - min_start))
+    return min_start + clamped_offset
+
 def build_rc_lowpass_filter():
     """Build a simple RC low-pass filter."""
     print("="*70)
@@ -33,31 +42,34 @@ def build_rc_lowpass_filter():
     print("                    VOUT")
 
     # Step 1: Place resistor (rows 5-6)
-    print("\n[Step 1] Placing resistor (rows 5-6)...")
-    b = b.apply_action(('wire', b.VIN_ROW, 0, 5, 1))  # Activate row 5
-    b = b.apply_action(('resistor', 5, 1))
+    resistor_row = choose_row(b, 3, height=2)
+    print(f"\n[Step 1] Placing resistor (rows {resistor_row}-{resistor_row + 1})...")
+    b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # Activate resistor top
+    b = b.apply_action(('resistor', resistor_row, 1))
 
     # Step 2: Place capacitor (rows 8-9)
-    print("[Step 2] Placing capacitor (rows 8-9)...")
-    b = b.apply_action(('capacitor', 8, 2))
+    capacitor_row = choose_row(b, 6, height=2)
+    print(f"[Step 2] Placing capacitor (rows {capacitor_row}-{capacitor_row + 1})...")
+    b = b.apply_action(('capacitor', capacitor_row, 1))
 
     # Step 3: Connect resistor output to capacitor input (midpoint)
     print("[Step 3] Connecting resistor to capacitor...")
-    b = b.apply_action(('wire', 6, 1, 8, 2))
+    b = b.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))
 
     # Step 4: Connect capacitor bottom to ground
     print("[Step 4] Connecting capacitor to ground...")
-    b = b.apply_action(('wire', 9, 2, b.VSS_ROW, 2))
+    b = b.apply_action(('wire', capacitor_row + 1, 1, b.VSS_ROW, 0))
 
     # Step 5: Connect VOUT to midpoint
     print("[Step 5] Connecting VOUT to midpoint...")
-    b = b.apply_action(('wire', 6, 1, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', resistor_row + 1, 1, b.VOUT_ROW, 0))
 
     # Step 6: Add inductor for more complexity (makes RLC filter)
+    inductor_row = choose_row(b, 9, height=2)
     print("[Step 6] Adding inductor in series with capacitor...")
-    b = b.apply_action(('inductor', 11, 3))
-    b = b.apply_action(('wire', 9, 2, 11, 3))  # Cap to inductor
-    b = b.apply_action(('wire', 12, 3, b.VSS_ROW, 3))  # Inductor to ground
+    b = b.apply_action(('inductor', inductor_row, 1))
+    b = b.apply_action(('wire', capacitor_row + 1, 1, inductor_row, 1))  # Cap to inductor
+    b = b.apply_action(('wire', inductor_row + 1, 1, b.VSS_ROW, 0))  # Inductor to ground
 
     print("\n✅ RC Low-Pass Filter built successfully!")
     return b

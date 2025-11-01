@@ -61,6 +61,14 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
     """
     # Create a fresh board without pre-placed VIN/VOUT
     new_board = Breadboard.__new__(Breadboard)
+    new_board.ROWS = board.ROWS
+    new_board.COLUMNS = board.COLUMNS
+    new_board.VSS_ROW = board.VSS_ROW
+    new_board.VDD_ROW = board.VDD_ROW
+    new_board.VIN_ROW = board.VIN_ROW
+    new_board.VOUT_ROW = board.VOUT_ROW
+    new_board.WORK_START_ROW = board.WORK_START_ROW
+    new_board.WORK_END_ROW = board.WORK_END_ROW
     new_board.grid = [[None for _ in range(board.COLUMNS)] for _ in range(board.ROWS)]
     new_board.placed_components = []
     new_board.component_counter = 0

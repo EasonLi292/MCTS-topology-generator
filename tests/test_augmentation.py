@@ -19,6 +19,15 @@ from utils.augmentation import (
     deduplicate_boards
 )
 
+def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
+    """Select a valid starting row for a component inside the work area."""
+    min_start = board.WORK_START_ROW
+    max_start = board.WORK_END_ROW - (height - 1)
+    if max_start < min_start:
+        raise ValueError("Breadboard does not have enough work rows for this component")
+    clamped_offset = max(0, min(offset, max_start - min_start))
+    return min_start + clamped_offset
+
 
 def test_basic_translation():
     """Test that vertical translation preserves circuit topology."""
@@ -28,19 +37,22 @@ def test_basic_translation():
 
     # Create a simple circuit: VIN -> Resistor -> VOUT
     b0 = Breadboard()
-    b0 = b0.apply_action(('resistor', 5, 1))  # R at rows 5-6
-    b0 = b0.apply_action(('wire', 1, 0, 5, 1))  # VIN (row 1) to R
-    b0 = b0.apply_action(('wire', 6, 1, 28, 0))  # R to VOUT (row 28)
+    resistor_row = choose_row(b0, 3, height=2)
+    b0 = b0.apply_action(('resistor', resistor_row, 1))  # Resistor spanning two rows
+    b0 = b0.apply_action(('wire', b0.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
+    b0 = b0.apply_action(('wire', resistor_row + 1, 1, b0.VOUT_ROW, 0))  # Resistor to VOUT
 
     print(f"Original circuit:")
     print(f"  Components: {len(b0.placed_components)}")
     print(f"  Row range: {get_min_max_rows(b0)}")
 
     # Translate down by 3 rows
-    b1 = translate_vertically(b0, 3)
+    max_down = b0.WORK_END_ROW - (resistor_row + 1)
+    translation_offset = min(3, max_down)
+    b1 = translate_vertically(b0, translation_offset)
     assert b1 is not None, "Translation should succeed"
 
-    print(f"\nTranslated circuit (+3 rows):")
+    print(f"\nTranslated circuit (+{translation_offset} rows):")
     print(f"  Components: {len(b1.placed_components)}")
     print(f"  Row range: {get_min_max_rows(b1)}")
 
@@ -67,16 +79,15 @@ def test_canonical_form():
     # Create same circuit at different vertical positions
     circuits = []
 
-    for start_row in [3, 5, 7, 10]:
+    for offset in [0, 2, 4, 6]:
         b = Breadboard()
-        # Create VIN at row start_row
-        # Since VIN is pre-placed at row 5, we need to work with that constraint
-        b = b.apply_action(('resistor', start_row, 1))
-        b = b.apply_action(('wire', 5, 0, start_row, 1))  # VIN at 5 to R
-        b = b.apply_action(('wire', start_row + 1, 1, 20, 0))  # R to VOUT at 20
+        resistor_row = choose_row(b, 3 + offset, height=2)
+        b = b.apply_action(('resistor', resistor_row, 1))
+        b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
+        b = b.apply_action(('wire', resistor_row + 1, 1, b.VOUT_ROW, 0))  # Resistor to VOUT
 
         circuits.append(b)
-        print(f"Circuit with resistor at row {start_row}: range {get_min_max_rows(b)}")
+        print(f"Circuit with resistor at row {resistor_row}: range {get_min_max_rows(b)}")
 
     # Get canonical forms
     canonical_forms = [get_canonical_form(b) for b in circuits]
@@ -98,9 +109,10 @@ def test_generate_translations():
 
     # Create a compact circuit
     b0 = Breadboard()
-    b0 = b0.apply_action(('resistor', 10, 1))  # R at rows 10-11
-    b0 = b0.apply_action(('wire', 5, 0, 10, 1))  # VIN to R
-    b0 = b0.apply_action(('wire', 11, 1, 20, 0))  # R to VOUT
+    resistor_row = choose_row(b0, 6, height=2)
+    b0 = b0.apply_action(('resistor', resistor_row, 1))  # R at rows resistor_row/resistor_row+1
+    b0 = b0.apply_action(('wire', b0.VIN_ROW, 0, resistor_row, 1))  # VIN to R
+    b0 = b0.apply_action(('wire', resistor_row + 1, 1, b0.VOUT_ROW, 0))  # R to VOUT
 
     print(f"Original circuit row range: {get_min_max_rows(b0)}")
 
@@ -130,14 +142,16 @@ def test_augment_board_set():
 
     # Create two different circuits at arbitrary positions
     b1 = Breadboard()
-    b1 = b1.apply_action(('resistor', 8, 1))
-    b1 = b1.apply_action(('wire', 5, 0, 8, 1))
-    b1 = b1.apply_action(('wire', 9, 1, 20, 0))
+    r1 = choose_row(b1, 4, height=2)
+    b1 = b1.apply_action(('resistor', r1, 1))
+    b1 = b1.apply_action(('wire', b1.VIN_ROW, 0, r1, 1))
+    b1 = b1.apply_action(('wire', r1 + 1, 1, b1.VOUT_ROW, 0))
 
     b2 = Breadboard()
-    b2 = b2.apply_action(('capacitor', 12, 1))
-    b2 = b2.apply_action(('wire', 5, 0, 12, 1))
-    b2 = b2.apply_action(('wire', 13, 1, 20, 0))
+    c2 = choose_row(b2, 8, height=2)
+    b2 = b2.apply_action(('capacitor', c2, 1))
+    b2 = b2.apply_action(('wire', b2.VIN_ROW, 0, c2, 1))
+    b2 = b2.apply_action(('wire', c2 + 1, 1, b2.VOUT_ROW, 0))
 
     # Assign rewards
     boards_with_rewards = {
@@ -173,10 +187,10 @@ def test_deduplication():
     circuits = []
     for offset in [0, 2, 4, 6, 8]:
         b = Breadboard()
-        row = 5 + offset
+        row = choose_row(b, 3 + offset, height=2)
         b = b.apply_action(('resistor', row, 1))
-        b = b.apply_action(('wire', 5, 0, row, 1))
-        b = b.apply_action(('wire', row + 1, 1, 20, 0))
+        b = b.apply_action(('wire', b.VIN_ROW, 0, row, 1))
+        b = b.apply_action(('wire', row + 1, 1, b.VOUT_ROW, 0))
         circuits.append(b)
 
     print(f"Created {len(circuits)} circuits (same topology, different positions)")
@@ -202,25 +216,31 @@ def test_canonical_invariance():
 
     # Create a circuit
     b0 = Breadboard()
-    b0 = b0.apply_action(('resistor', 10, 1))
-    b0 = b0.apply_action(('capacitor', 12, 2))
-    b0 = b0.apply_action(('wire', 5, 0, 10, 1))
-    b0 = b0.apply_action(('wire', 11, 1, 12, 2))
-    b0 = b0.apply_action(('wire', 13, 2, 20, 0))
+    resistor_row = choose_row(b0, 5, height=2)
+    capacitor_row = choose_row(b0, 8, height=2)
+    b0 = b0.apply_action(('resistor', resistor_row, 1))
+    b0 = b0.apply_action(('capacitor', capacitor_row, 1))
+    b0 = b0.apply_action(('wire', b0.VIN_ROW, 0, resistor_row, 1))
+    b0 = b0.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))
+    b0 = b0.apply_action(('wire', capacitor_row + 1, 1, b0.VOUT_ROW, 0))
 
     # Translate multiple times
-    b1 = translate_vertically(b0, 2)
-    b2 = translate_vertically(b0, -2)
+    max_down = b0.WORK_END_ROW - (capacitor_row + 1)
+    max_up = resistor_row - b0.WORK_START_ROW
+    down_offset = min(2, max_down)
+    up_offset = min(2, max_up)
+    b1 = translate_vertically(b0, down_offset) if down_offset > 0 else None
+    b2 = translate_vertically(b0, -up_offset) if up_offset > 0 else None
 
     # Get canonical hashes
     h0 = canonical_hash(b0)
     if b1:
         h1 = canonical_hash(b1)
         print(f"Original hash:     {h0}")
-        print(f"Translated +2:     {h1}")
+        print(f"Translated +{down_offset}:     {h1}")
     if b2:
         h2 = canonical_hash(b2)
-        print(f"Translated -2:     {h2}")
+        print(f"Translated -{up_offset}:     {h2}")
 
     # Due to fixed VIN/VOUT, translations change the relative topology
     # So hashes may differ - this is expected behavior

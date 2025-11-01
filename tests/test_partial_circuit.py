@@ -13,6 +13,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
 from topology_game_board import Breadboard
 from MCTS import MCTS
 
+def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
+    """Select a valid starting row for components within the work area."""
+    min_start = board.WORK_START_ROW
+    max_start = board.WORK_END_ROW - (height - 1)
+    if max_start < min_start:
+        raise ValueError("Breadboard does not have enough rows for requested component")
+    clamped_offset = max(0, min(offset, max_start - min_start))
+    return min_start + clamped_offset
+
 print("="*70)
 print("BUILDING PARTIAL CIRCUIT")
 print("="*70)
@@ -20,24 +29,27 @@ print("="*70)
 # Build partial circuit: VIN -> Resistor -> (need to add capacitor) -> VOUT
 board = Breadboard()
 
-print("\nStep 1: Place resistor at (1,1)-(2,1)")
-board = board.apply_action(('resistor', 1, 1))
+resistor_row = choose_row(board, 3, height=2)
+capacitor_row = choose_row(board, 6, height=2)
+
+print(f"\nStep 1: Place resistor at rows {resistor_row}-{resistor_row + 1} (column 1)")
+board = board.apply_action(('resistor', resistor_row, 1))
 print(f"  Resistor placed: {[c for c in board.placed_components if c.type == 'resistor']}")
 
-print("\nStep 2: Wire VIN (1,0) to resistor top pin (1,1)")
-board = board.apply_action(('wire', 1, 0, 1, 1))
+print(f"\nStep 2: Wire VIN ({board.VIN_ROW},0) to resistor top pin ({resistor_row},1)")
+board = board.apply_action(('wire', board.VIN_ROW, 0, resistor_row, 1))
 print("  Wire placed")
 
-print("\nStep 3: Place capacitor at (5,2)-(6,2)")
-board = board.apply_action(('capacitor', 5, 2))
+print(f"\nStep 3: Place capacitor at rows {capacitor_row}-{capacitor_row + 1} (column 1)")
+board = board.apply_action(('capacitor', capacitor_row, 1))
 print(f"  Capacitor placed: {[c for c in board.placed_components if c.type == 'capacitor']}")
 
-print("\nStep 4: Wire resistor bottom (2,1) to capacitor top (5,2)")
-board = board.apply_action(('wire', 2, 1, 5, 2))
+print(f"\nStep 4: Wire resistor bottom ({resistor_row + 1},1) to capacitor top ({capacitor_row},1)")
+board = board.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))
 print("  Wire placed")
 
 print("\n--- CIRCUIT IS ALMOST COMPLETE ---")
-print("Missing: Wire from capacitor bottom (6,2) to VOUT (28,0)")
+print(f"Missing: Wire from capacitor bottom ({capacitor_row + 1},1) to VOUT ({board.VOUT_ROW},0)")
 
 # Check current state
 print(f"\nCurrent state:")
@@ -55,7 +67,7 @@ vout_net = position_to_net[vout_comp.pins[0]]
 
 print(f"\n  VIN net: {vin_net}")
 print(f"  VOUT net: {vout_net}")
-print(f"  Capacitor bottom (6,2) net: {position_to_net.get((6,2), '?')}")
+print(f"  Capacitor bottom ({capacitor_row + 1},1) net: {position_to_net.get((capacitor_row + 1,1), '?')}")
 print(f"  Connected: {vin_net == vout_net}")
 
 # Check legal actions - should include the wire we need
@@ -63,28 +75,28 @@ actions = board.legal_actions()
 print(f"\nLegal actions available: {len(actions)}")
 
 # Look for the winning move
-winning_wire = ('wire', 6, 2, 28, 0)
+winning_wire = ('wire', capacitor_row + 1, 1, board.VOUT_ROW, 0)
 if winning_wire in actions:
     print(f"✓ Winning wire IS available: {winning_wire}")
 else:
     print(f"✗ Winning wire NOT in actions")
     # Check if similar wires exist
-    wires_from_6_2 = [a for a in actions if a[0] == 'wire' and a[1] == 6 and a[2] == 2]
-    wires_to_28_0 = [a for a in actions if a[0] == 'wire' and a[3] == 28 and a[4] == 0]
-    print(f"  Wires from (6,2): {len(wires_from_6_2)}")
-    print(f"  Wires to (28,0): {len(wires_to_28_0)}")
+    wires_from_cap = [a for a in actions if a[0] == 'wire' and a[1] == capacitor_row + 1 and a[2] == 1]
+    wires_to_vout = [a for a in actions if a[0] == 'wire' and a[3] == board.VOUT_ROW and a[4] == 0]
+    print(f"  Wires from ({capacitor_row + 1},1): {len(wires_from_cap)}")
+    print(f"  Wires to ({board.VOUT_ROW},0): {len(wires_to_vout)}")
 
     # Why isn't this wire allowed? Let's check
-    print(f"\n  Checking can_place_wire(6, 2, 28, 0):")
-    can_place = board.can_place_wire(6, 2, 28, 0)
+    print(f"\n  Checking can_place_wire({capacitor_row + 1}, 1, {board.VOUT_ROW}, 0):")
+    can_place = board.can_place_wire(capacitor_row + 1, 1, board.VOUT_ROW, 0)
     print(f"  Result: {can_place}")
 
     if not can_place:
         # Debug why
         print(f"  Debug info:")
-        print(f"    Row 6 active: {board.is_row_active(6)}")
-        print(f"    Row 28 active: {board.is_row_active(28)}")
-        print(f"    At least one active: {board.is_row_active(6) or board.is_row_active(28)}")
+        print(f"    Row {capacitor_row + 1} active: {board.is_row_active(capacitor_row + 1)}")
+        print(f"    Row {board.VOUT_ROW} active: {board.is_row_active(board.VOUT_ROW)}")
+        print(f"    At least one active: {board.is_row_active(capacitor_row + 1) or board.is_row_active(board.VOUT_ROW)}")
 
 print("\n" + "="*70)
 print("RUNNING MCTS TO COMPLETE CIRCUIT")

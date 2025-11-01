@@ -46,18 +46,20 @@ This project implements a Monte Carlo Tree Search (MCTS) algorithm to automatica
 
 ## Breadboard Grid Structure
 
-The virtual breadboard is a **30×8 grid**:
+The virtual breadboard uses **8 columns** and a configurable number of rows:
 
 ```
-Row  0: VSS (Ground)           [Reserved - always available]
-Row  1: VIN (Input Signal)     [Reserved - input node]
-Rows 2-27: Component Work Area [Available for component placement]
-Row 28: VOUT (Output Signal)   [Reserved - output node]
-Row 29: VDD (Power Supply)     [Reserved - always available]
+Row 0:              VSS (Ground)                  [Reserved - always available]
+Row 1:              VIN (Input Signal)            [Reserved - input node]
+Rows 2..(N-3):      Component Work Area           [Available for component placement]
+Row (N-2):          VOUT (Output Signal)          [Reserved - output node]
+Row (N-1):          VDD (Power Supply)            [Reserved - always available]
 ```
+
+`N` is user-selectable (command-line default 15; historical layout uses 30). All documentation and tests derive row indices from these symbolic positions, so the search can adapt to smaller boards for faster convergence or larger ones for richer topologies.
 
 **Design Features:**
-- Reserved rows ensure consistent power/ground/I/O availability
+- Reserved rows ensure consistent power/ground/I/O availability regardless of total height
 - Column 0 contains VIN/VOUT markers
 - Columns 1-7 used for circuit components
 - Column-by-column placement reduces search space
@@ -194,12 +196,13 @@ This ensures MCTS heavily prioritizes finding valid, working circuits over explo
 
 ```bash
 cd core
-python3 main.py --iterations 10000 --exploration 1.0 --verbose
+python3 main.py --iterations 10000 --exploration 1.0 --board-rows 20 --verbose
 ```
 
 **Arguments:**
 - `--iterations N`: Number of MCTS iterations (default: 10000)
 - `--exploration C`: UCT exploration constant (default: 1.0)
+- `--board-rows R`: Total row count for the breadboard workspace (default: 15)
 - `--verbose`: Print detailed action sequence
 
 **Output:**

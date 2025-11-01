@@ -13,6 +13,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
 
 from topology_game_board import Breadboard
 
+def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
+    """
+    Choose a starting row within the configurable work area.
+
+    Args:
+        board: Breadboard instance
+        offset: Desired offset from WORK_START_ROW
+        height: Number of vertical slots required by the component
+
+    Returns:
+        Valid starting row clamped within bounds
+    """
+    min_start = board.WORK_START_ROW
+    max_start = board.WORK_END_ROW - (height - 1)
+    if max_start < min_start:
+        raise ValueError("Breadboard does not have enough work rows for component placement")
+    clamped_offset = max(0, min(offset, max_start - min_start))
+    return min_start + clamped_offset
+
 def test_floating_component_detection():
     """Test that floating components are properly detected and rejected."""
     print("\n=== Test 1: Floating Component Detection ===")
@@ -20,15 +39,18 @@ def test_floating_component_detection():
     # Create a circuit with a floating resistor
     b = Breadboard()
 
+    resistor_row = choose_row(b, 3, height=2)
+    floating_cap_row = choose_row(b, 7, height=2)
+
     # Place resistor connected to VIN
-    b = b.apply_action(('resistor', 5, 1))
-    b = b.apply_action(('wire', 1, 0, 5, 1))  # VIN to resistor
+    b = b.apply_action(('resistor', resistor_row, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
 
     # Place a floating capacitor (not connected to anything)
-    b = b.apply_action(('capacitor', 10, 2))
+    b = b.apply_action(('capacitor', floating_cap_row, 1))
 
     # Connect resistor to VOUT (bypassing the floating capacitor)
-    b = b.apply_action(('wire', 6, 1, 28, 0))
+    b = b.apply_action(('wire', resistor_row + 1, 1, b.VOUT_ROW, 0))
 
     # Circuit should NOT be valid because capacitor is floating
     if b.is_complete_and_valid():
@@ -46,10 +68,12 @@ def test_gate_vdd_connection_prevention():
     b = Breadboard()
 
     # Place NMOS transistor (drain=pin0, gate=pin1, source=pin2)
-    b = b.apply_action(('nmos3', 5, 1))
+    nmos_row = choose_row(b, 3, height=3)
+    b = b.apply_action(('nmos3', nmos_row, 1))
 
     # Try to wire gate (row 6) to VDD (row 29)
-    can_wire_gate_to_vdd = b.can_place_wire(6, 1, 29, 0)
+    gate_row = nmos_row + 1
+    can_wire_gate_to_vdd = b.can_place_wire(gate_row, 1, b.VDD_ROW, 0)
 
     if can_wire_gate_to_vdd:
         print("❌ FAILED: Gate-to-VDD wire was allowed!")
@@ -66,10 +90,12 @@ def test_gate_vss_connection_prevention():
     b = Breadboard()
 
     # Place PMOS transistor
-    b = b.apply_action(('pmos3', 5, 1))
+    pmos_row = choose_row(b, 3, height=3)
+    b = b.apply_action(('pmos3', pmos_row, 1))
 
     # Try to wire gate (row 6) to VSS (row 0)
-    can_wire_gate_to_vss = b.can_place_wire(6, 1, 0, 0)
+    gate_row = pmos_row + 1
+    can_wire_gate_to_vss = b.can_place_wire(gate_row, 1, b.VSS_ROW, 0)
 
     if can_wire_gate_to_vss:
         print("❌ FAILED: Gate-to-VSS wire was allowed!")
@@ -86,10 +112,12 @@ def test_base_vdd_connection_prevention():
     b = Breadboard()
 
     # Place NPN transistor (collector=pin0, base=pin1, emitter=pin2)
-    b = b.apply_action(('npn', 5, 1))
+    npn_row = choose_row(b, 3, height=3)
+    b = b.apply_action(('npn', npn_row, 1))
 
     # Try to wire base (row 6) to VDD (row 29)
-    can_wire_base_to_vdd = b.can_place_wire(6, 1, 29, 0)
+    base_row = npn_row + 1
+    can_wire_base_to_vdd = b.can_place_wire(base_row, 1, b.VDD_ROW, 0)
 
     if can_wire_base_to_vdd:
         print("❌ FAILED: Base-to-VDD wire was allowed!")
@@ -106,10 +134,12 @@ def test_base_vss_connection_prevention():
     b = Breadboard()
 
     # Place PNP transistor
-    b = b.apply_action(('pnp', 5, 1))
+    pnp_row = choose_row(b, 3, height=3)
+    b = b.apply_action(('pnp', pnp_row, 1))
 
     # Try to wire base (row 6) to VSS (row 0)
-    can_wire_base_to_vss = b.can_place_wire(6, 1, 0, 0)
+    base_row = pnp_row + 1
+    can_wire_base_to_vss = b.can_place_wire(base_row, 1, b.VSS_ROW, 0)
 
     if can_wire_base_to_vss:
         print("❌ FAILED: Base-to-VSS wire was allowed!")
@@ -126,17 +156,20 @@ def test_valid_circuit_with_all_connected():
     b = Breadboard()
 
     # Build a simple RC circuit with all components connected
-    # VIN -> Resistor -> Capacitor -> VOUT
-    b = b.apply_action(('resistor', 5, 1))
-    b = b.apply_action(('wire', 1, 0, 5, 1))  # VIN to resistor pin 1
+    # VIN -> Resistor -> Capacitor -> Inductor -> VOUT
+    resistor_row = choose_row(b, 3, height=2)
+    capacitor_row = choose_row(b, 6, height=2)
+    inductor_row = choose_row(b, 9, height=2)
+    b = b.apply_action(('resistor', resistor_row, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor pin 1
 
-    b = b.apply_action(('capacitor', 8, 2))
-    b = b.apply_action(('wire', 6, 1, 8, 2))  # Resistor pin 2 to capacitor pin 1
+    b = b.apply_action(('capacitor', capacitor_row, 1))
+    b = b.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))  # Resistor pin 2 to capacitor pin 1
 
-    b = b.apply_action(('inductor', 11, 3))
-    b = b.apply_action(('wire', 9, 2, 11, 3))  # Capacitor pin 2 to inductor pin 1
+    b = b.apply_action(('inductor', inductor_row, 1))
+    b = b.apply_action(('wire', capacitor_row + 1, 1, inductor_row, 1))  # Capacitor pin 2 to inductor pin 1
 
-    b = b.apply_action(('wire', 12, 3, 28, 0))  # Inductor pin 2 to VOUT
+    b = b.apply_action(('wire', inductor_row + 1, 1, b.VOUT_ROW, 0))  # Inductor pin 2 to VOUT
 
     # All components are connected, circuit should be valid
     if b.is_complete_and_valid():
@@ -144,7 +177,7 @@ def test_valid_circuit_with_all_connected():
         return True
     else:
         print("❌ FAILED: Valid circuit was rejected!")
-        print(f"  VIN-VOUT connected: {b.find(1) == b.find(28)}")
+        print(f"  VIN-VOUT connected: {b.find(b.VIN_ROW) == b.find(b.VOUT_ROW)}")
         print(f"  All components connected: {b._all_components_connected()}")
         print(f"  Gate/base validation: {b._validate_gate_base_connections()}")
         return False
@@ -160,11 +193,14 @@ def test_transistor_circuit_with_valid_connections():
     #                                 NMOS drain -> VOUT
     #                                 NMOS source -> ground
 
-    # Place NMOS (drain=5, gate=6, source=7)
-    b = b.apply_action(('nmos3', 5, 1))
-    b = b.apply_action(('wire', 1, 0, 6, 1))  # VIN to gate (valid!)
-    b = b.apply_action(('wire', 5, 1, 28, 0))  # Drain to VOUT
-    b = b.apply_action(('wire', 7, 1, 0, 0))  # Source to ground
+    # Place NMOS (drain, gate, source)
+    nmos_row = choose_row(b, 3, height=3)
+    b = b.apply_action(('nmos3', nmos_row, 1))
+    gate_row = nmos_row + 1
+    source_row = nmos_row + 2
+    b = b.apply_action(('wire', b.VIN_ROW, 0, gate_row, 1))  # VIN to gate (valid!)
+    b = b.apply_action(('wire', nmos_row, 1, b.VOUT_ROW, 0))  # Drain to VOUT
+    b = b.apply_action(('wire', source_row, 1, b.VSS_ROW, 0))  # Source to ground
 
     # This should be valid - gate connected to VIN (not VDD/VSS)
     gate_validation = b._validate_gate_base_connections()
@@ -190,8 +226,9 @@ def test_partial_circuit_not_valid():
     b = Breadboard()
 
     # Place components but don't connect VIN to VOUT
-    b = b.apply_action(('resistor', 5, 1))
-    b = b.apply_action(('wire', 1, 0, 5, 1))  # VIN to resistor
+    resistor_row = choose_row(b, 3, height=2)
+    b = b.apply_action(('resistor', resistor_row, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, 0, resistor_row, 1))  # VIN to resistor
     # (Don't connect to VOUT)
 
     if b.is_complete_and_valid():

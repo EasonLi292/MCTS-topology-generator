@@ -31,6 +31,8 @@ python3 main.py --iterations 1000
 
 Expected output: Search progress, best circuit found, SPICE netlist saved to file.
 
+> Tip: Add `--board-rows N` (e.g., `--board-rows 20`) to grow or shrink the vertical workspace. Smaller boards (default 15 rows) tighten the search area and often improve convergence speed.
+
 ## Code Quality Highlights (1 minute)
 
 ✅ **SOLID Principles Applied**
@@ -86,7 +88,7 @@ User Input → main.py
 ```
 
 **Key Concepts**:
-- **Breadboard**: 30×8 virtual breadboard with components and wires
+- **Breadboard**: Configurable-height virtual breadboard (8 columns; CLI default 15 rows) with pre-placed VIN/VOUT rails
 - **MCTS Phases**: Selection → Expansion → Simulation → Backpropagation
 - **Reward System**: SPICE-based (dominant) + heuristic guidance
 

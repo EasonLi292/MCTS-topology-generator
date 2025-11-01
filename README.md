@@ -65,7 +65,7 @@ python3 main.py
 ### Advanced Options
 
 ```bash
-python3 main.py --iterations 20000 --exploration 1.5 --verbose
+python3 main.py --iterations 20000 --exploration 1.5 --board-rows 20 --verbose
 ```
 
 **Arguments:**
@@ -73,6 +73,7 @@ python3 main.py --iterations 20000 --exploration 1.5 --verbose
 - `--exploration C`: UCT exploration constant (default: 1.0)
   - Lower values (0.5-1.0): More exploitation of known good circuits
   - Higher values (1.5-2.5): More exploration of new circuit topologies
+- `--board-rows R`: Total number of rows in the breadboard (default CLI run: 15; larger values re-enable the full 30-row workspace)
 - `--verbose`: Print detailed action sequence
 
 ### Output
@@ -145,7 +146,7 @@ See [`docs/README.md`](docs/README.md) for detailed documentation.
 ## How It Works
 
 ### 1. Breadboard Environment
-- Virtual 30x8 breadboard with power rails (VDD/VSS)
+- Virtual breadboard with configurable height (8 columns × user-selected rows; CLI default 15)
 - Input (VIN) and output (VOUT) markers pre-placed
 - Components placed in columns 1-7
 - Wires connect components across rows
