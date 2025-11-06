@@ -15,20 +15,26 @@ import re
 import shutil
 from typing import Optional, Tuple
 
-# Set library path for ngspice before importing PySpice
+# Set library path for ngspice
 os.environ['DYLD_LIBRARY_PATH'] = '/opt/homebrew/lib:' + os.environ.get('DYLD_LIBRARY_PATH', '')
-
-# Import the Circuit class from PySpice
-try:
-    from PySpice.Spice.Netlist import Circuit  # noqa: F401
-    from PySpice.Spice.NgSpice.Shared import NgSpiceShared  # noqa: F401
-    PYSPICE_AVAILABLE = True
-except ImportError as e:
-    PYSPICE_AVAILABLE = False
-    print(f"Warning: PySpice not available: {e}")
 
 DEFAULT_NGSPICE_PATH = '/opt/homebrew/bin/ngspice'
 NGSPICE_BINARY = os.environ.get('NGSPICE_BINARY') or shutil.which('ngspice') or DEFAULT_NGSPICE_PATH
+
+# Reward calculation constants
+BASELINE_REWARD = 100.0
+MINIMUM_REWARD = 100.0
+TRIVIAL_CIRCUIT_REWARD = 10.0
+
+# Reward multipliers for different metrics
+SPREAD_MULTIPLIER = 500.0      # Frequency-dependent behavior (most important)
+RANGE_MULTIPLIER = 250.0       # Dynamic range
+NON_MONOTONIC_MULTIPLIER = 20.0  # Peaks and valleys
+SIGNAL_PRESENCE_MULTIPLIER = 100.0  # Output signal strength
+
+# Thresholds
+MIN_OUTPUT_THRESHOLD = 1e-6    # Below this is considered open circuit
+MIN_SPREAD_THRESHOLD = 1e-9    # Below this is considered flat response
 
 def run_ac_simulation(netlist: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
@@ -258,18 +264,15 @@ def calculate_reward_from_simulation(frequency: Optional[np.ndarray],
     non_monotonic_bonus = _calculate_non_monotonic_bonus(output_magnitude)
     signal_presence_bonus = _calculate_signal_presence_bonus(output_magnitude)
 
-    # Baseline reward for any working circuit
-    baseline_reward = 100.0
-
     # Combine all metrics
-    total_reward = (baseline_reward +
+    total_reward = (BASELINE_REWARD +
                    spread_reward +
                    range_reward +
                    non_monotonic_bonus +
                    signal_presence_bonus)
 
     # Ensure minimum reward for any circuit that simulates
-    return max(total_reward, 100.0)
+    return max(total_reward, MINIMUM_REWARD)
 
 
 def _has_numerical_instability(magnitude: np.ndarray) -> bool:
@@ -296,12 +299,12 @@ def _check_trivial_circuit(magnitude: np.ndarray) -> Optional[float]:
         Small reward if circuit is trivial, None if circuit is non-trivial
     """
     # Check for no output (open circuit)
-    if np.all(magnitude < 1e-6):
-        return 10.0  # Tiny reward - circuit simulates but does nothing
+    if np.all(magnitude < MIN_OUTPUT_THRESHOLD):
+        return TRIVIAL_CIRCUIT_REWARD  # Tiny reward - circuit simulates but does nothing
 
     # Check for completely flat response (boring circuit)
-    if np.std(magnitude) < 1e-9:
-        return 10.0  # Flat response = boring
+    if np.std(magnitude) < MIN_SPREAD_THRESHOLD:
+        return TRIVIAL_CIRCUIT_REWARD  # Flat response = boring
 
     return None  # Circuit is non-trivial
 
@@ -321,7 +324,7 @@ def _calculate_spread_reward(magnitude: np.ndarray) -> float:
     """
     spread = np.std(magnitude)
     # Spread is THE MOST IMPORTANT - filters have high spread
-    return spread * 500.0
+    return spread * SPREAD_MULTIPLIER
 
 
 def _calculate_range_reward(magnitude: np.ndarray) -> float:
@@ -338,7 +341,7 @@ def _calculate_range_reward(magnitude: np.ndarray) -> float:
     """
     voltage_range = np.max(magnitude) - np.min(magnitude)
     # Range also very important
-    return voltage_range * 250.0
+    return voltage_range * RANGE_MULTIPLIER
 
 
 def _calculate_non_monotonic_bonus(magnitude: np.ndarray) -> float:
@@ -361,7 +364,7 @@ def _calculate_non_monotonic_bonus(magnitude: np.ndarray) -> float:
     sign_changes = np.sum(np.diff(np.sign(diff)) != 0)
 
     # Reward peaks and valleys
-    return sign_changes * 20.0
+    return sign_changes * NON_MONOTONIC_MULTIPLIER
 
 
 def _calculate_signal_presence_bonus(magnitude: np.ndarray) -> float:
@@ -377,4 +380,4 @@ def _calculate_signal_presence_bonus(magnitude: np.ndarray) -> float:
         Bonus score for signal presence
     """
     mean_output = np.mean(magnitude)
-    return mean_output * 100.0
+    return mean_output * SIGNAL_PRESENCE_MULTIPLIER

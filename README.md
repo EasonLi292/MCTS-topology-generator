@@ -4,11 +4,16 @@ Monte Carlo Tree Search (MCTS) based circuit topology generator that uses SPICE 
 
 ## Overview
 
-This project uses MCTS to explore the space of possible circuit topologies on a virtual breadboard. The algorithm:
-- Places components (resistors, capacitors, inductors, transistors, diodes)
-- Connects them with wires
-- Evaluates circuits using ngspice AC simulation
-- Rewards circuits based on frequency-dependent behavior and complexity
+The generator uses MCTS to explore the space of possible circuit topologies on a
+virtual breadboard. At each step the search:
+- Places components (resistors, capacitors, inductors, BJTs, MOSFETs, diodes)
+- Connects them with wires while honoring electrical guardrails
+- Evaluates promising candidates with ngspice AC simulation
+- Rewards interesting frequency responses and diverse component mixes
+
+> **Need a professor-friendly module summary?**  
+> Read [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) for a concise walkthrough of
+> the key functions, execution flow, and technical choices.
 
 ## Prerequisites
 
@@ -53,9 +58,7 @@ pip install PySpice numpy
 
 ## Usage
 
-### Basic Usage
-
-Run the MCTS circuit generator with default settings (10,000 iterations):
+### Basic Run (default 10,000 iterations)
 
 ```bash
 cd core
@@ -111,7 +114,7 @@ Average reward: 7.0100
 Netlist saved to: outputs/generated_circuit.sp
 ```
 
-## Project Structure
+## Project Structure (Key Files)
 
 ```
 MCTS-topology-generator/
@@ -138,6 +141,8 @@ MCTS-topology-generator/
 │   ├── ARCHITECTURE.md          # System architecture overview
 │   ├── VALIDATION_RULES_SUMMARY.md
 │   └── ...                      # Additional technical docs
+├── verify_system.py             # Smoke-test harness for quick validation
+├── PROJECT_OVERVIEW.md          # Quick tour of modules & primary functions
 └── README.md                    # This file
 ```
 
@@ -159,13 +164,10 @@ The algorithm uses four phases:
 4. **Backpropagation**: Update node statistics with reward
 
 ### 3. Reward System
-Rewards combine multiple factors:
-- **SPICE reward** (dominant): Based on frequency response characteristics
-  - Baseline: 5.0 for any working circuit
-  - Spread bonus: 50× standard deviation of output magnitude
-  - Range bonus: 25× (max - min) output voltage
-- **Complexity bonus**: 5.0 per unique component type + 2.0 per component
-- **Heuristic reward** (incomplete circuits): Small positive values to guide search
+Rewards combine several signals:
+- **SPICE reward** (dominant): Based on spread, range, non-monotonicity, and signal presence in the AC response.
+- **Complexity bonus**: Encourages diverse components once SPICE succeeds.
+- **Heuristic reward** (incomplete circuits): Progressive bonuses for touching rails, forming VIN→VOUT paths, and connecting every component.
 
 ### 4. Circuit Completion
 A circuit is complete when:
@@ -206,22 +208,11 @@ This codebase follows **SOLID principles** and software engineering best practic
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for design details.
 
-## Testing
+## Testing & Verification
 
-Run the test suite to verify functionality:
-
-```bash
-# Core MCTS tests
-python3 tests/test_mcts_fixes.py
-
-# Circuit validation tests
-python3 tests/test_validation_rules.py
-
-# Integration test
-python3 tests/test_mcts_search.py
-```
-
-See [`tests/README.md`](tests/README.md) for detailed test documentation.
+- **Targeted suites**: `pytest tests/` (covers placement rules, rewards, SPICE netlists, and mini-searches).
+- **One-shot smoke test**: `python3 verify_system.py` exercises board setup, a short search, and SPICE export.
+- See [`tests/README.md`](tests/README.md) for detailed test documentation.
 
 ## Recent Improvements
 

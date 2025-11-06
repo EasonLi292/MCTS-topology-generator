@@ -20,9 +20,40 @@ import copy
 # ============================================================
 @dataclass(frozen=True)
 class ComponentInfo:
+    """
+    Metadata for electronic components in the circuit topology generator.
+
+    This dataclass defines the characteristics and placement rules for each
+    component type that can be placed on the virtual breadboard.
+
+    Attributes:
+        pin_count (int): Number of pins the component has (e.g., 2 for resistor, 3 for transistor).
+            **ACTIVELY USED** - Determines component size and placement validation.
+
+        vertical_only (bool): **RESERVED FOR FUTURE USE** - Not currently enforced.
+            All components are placed vertically in the current implementation.
+            Wire placement uses separate logic in can_place_wire().
+            Consider removing or implementing if horizontal placement is needed.
+
+        pin_names (List[str]): **RESERVED FOR FUTURE USE** - Not currently used.
+            Symbolic names for each pin (e.g., ['drain', 'gate', 'source'] for MOSFETs).
+            Could be used for enhanced netlist generation or validation.
+            Consider removing if not needed, or document intended use case.
+
+        can_place_multiple (bool): **ACTIVELY USED** - Enforced in can_place_component() (line 130).
+            If False, prevents placing more than one instance of this component type.
+            Used for VIN and VOUT to ensure only one of each exists on the board.
+            Default: True (most components can have multiple instances).
+
+    Usage Notes:
+        - Only pin_count and can_place_multiple are currently used in validation logic
+        - vertical_only and pin_names are defined but never referenced in placement/netlist code
+        - Future enhancements could leverage pin_names for polarity checking (diodes)
+          or improved SPICE netlist labeling
+    """
     pin_count: int
-    vertical_only: bool
-    pin_names: List[str] = field(default_factory=list)
+    vertical_only: bool  # RESERVED: Not currently enforced
+    pin_names: List[str] = field(default_factory=list)  # RESERVED: Not currently used
     can_place_multiple: bool = True
 
 COMPONENT_CATALOG: Dict[str, ComponentInfo] = {
@@ -174,10 +205,6 @@ class Breadboard:
 
         # RELAXED: VIN can now connect to any component/position (not just MOSFET gates)
         # This allows more circuit topologies to be explored
-        # if r1 == self.VIN_ROW and not self._is_mos_gate_cell(r2, c2):
-        #     return False
-        # if r2 == self.VIN_ROW and not self._is_mos_gate_cell(r1, c1):
-        #     return False
 
         # FIXED: Prevent wires from landing on VIN/VOUT rows at columns != 0
         # VIN and VOUT are at column 0, so wires to other columns on these rows
