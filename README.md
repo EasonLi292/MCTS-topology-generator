@@ -11,10 +11,6 @@ virtual breadboard. At each step the search:
 - Evaluates promising candidates with ngspice AC simulation
 - Rewards interesting frequency responses and diverse component mixes
 
-> **Need a professor-friendly module summary?**  
-> Read [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) for a concise walkthrough of
-> the key functions, execution flow, and technical choices.
-
 ## Prerequisites
 
 - Python 3.12+
