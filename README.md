@@ -127,9 +127,6 @@ MCTS-topology-generator/
 │   ├── test_validation_rules.py # Circuit validation tests
 │   ├── test_mcts_search.py      # Integration tests
 │   └── ...                      # Additional circuit-specific tests
-├── examples/                    # Example SPICE netlists
-│   ├── best_candidate_circuit.sp
-│   └── generated_circuit.sp
 ├── outputs/                     # Generated SPICE netlists (ignored by git)
 │   ├── best_candidate_circuit.sp
 │   └── generated_circuit.sp

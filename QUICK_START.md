@@ -47,7 +47,7 @@ Expected output: Search progress, best circuit found, SPICE netlist saved to fil
 
 ✅ **Organization**
 - Clean separation: MCTS algorithm, Environment, Simulation, Utils
-- Professional directory structure (core/, tests/, docs/, examples/)
+- Professional directory structure (core/, tests/, docs/, utils/, outputs/)
 
 ## Key Files to Review (5 minutes)
 
@@ -94,14 +94,12 @@ User Input → main.py
 
 ## Documentation (browse as needed)
 
-- **README.md** - Main documentation with usage examples
+- **README.md** - Main documentation with setup and usage details
 - **docs/ARCHITECTURE.md** - Detailed system design
 - **docs/VALIDATION_RULES_SUMMARY.md** - Circuit validation rules
 - **tests/README.md** - Test suite documentation
 
 ## Example Output
-
-See `examples/` for static sample netlists.
 
 When you run `python3 core/main.py`, fresh artifacts are written to `outputs/`:
 - `outputs/best_candidate_circuit.sp` - Highest reward circuit found
@@ -111,5 +109,5 @@ When you run `python3 core/main.py`, fresh artifacts are written to `outputs/`:
 
 For detailed explanations, see:
 - System design: `docs/ARCHITECTURE.md`
-- Code quality: `README.md` → "Code Quality" section
+- Project overview & usage: `README.md`
 - Testing: `tests/README.md`

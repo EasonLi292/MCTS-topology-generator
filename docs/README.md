@@ -1,25 +1,26 @@
 # Documentation
 
-Comprehensive documentation for the MCTS Circuit Topology Generator.
+This directory collects the core references you need to understand and verify
+the MCTS circuit topology generator. Non-essential historical notes have been
+removed so the remaining files stay focused and easy to navigate.
 
-## Architecture & Design
+## Available References
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - System architecture, breadboard structure, and algorithm overview
-- **[PROJECT_STATUS.md](PROJECT_STATUS.md)** - Current project status and development history
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**  
+  High-level system design covering the breadboard model, MCTS flow, and SPICE
+  integration points.
 
-## Technical Details
+- **[VALIDATION_RULES_SUMMARY.md](VALIDATION_RULES_SUMMARY.md)**  
+  Electrical guardrails, placement constraints, and connectivity checks used to
+  decide whether a circuit is simulation-ready.
 
-- **[VALIDATION_RULES_SUMMARY.md](VALIDATION_RULES_SUMMARY.md)** - Circuit validation rules and electrical constraints
-- **[BOOSTED_SPICE_REWARDS.md](BOOSTED_SPICE_REWARDS.md)** - SPICE reward system design and tuning
-- **[AUGMENTATION_INTEGRATION_GUIDE.md](AUGMENTATION_INTEGRATION_GUIDE.md)** - Circuit augmentation for search space reduction
+- **[README.md](../README.md)** (root-level)  
+  Practical instructions for installing dependencies, running searches, and
+  exporting results.
 
-## Development Notes
+## Related Resources
 
-- **[MCTS_FIXES_SUMMARY.md](MCTS_FIXES_SUMMARY.md)** - Bug fixes and improvements log
-- **[CMOS_INVERTER_TEST_RESULTS.md](CMOS_INVERTER_TEST_RESULTS.md)** - Test results for CMOS inverter circuits
+- [tests/README.md](../tests/README.md) — overview of the automated test suites.
 
-## Quick Links
-
-- [Main README](../README.md) - Getting started guide
-- [Tests](../tests/README.md) - Test suite documentation
-- [Examples](../examples/README.md) - Example circuit outputs
+Archived materials (fix logs, status notes, and augmentation guides) were
+intentionally removed; consult version control history if you need them.
