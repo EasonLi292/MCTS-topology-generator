@@ -88,7 +88,7 @@ class Component:
 # Breadboard Class
 # ============================================================
 class Breadboard:
-    DEFAULT_ROWS = 30
+    DEFAULT_ROWS = 15
     DEFAULT_COLUMNS = 8
     MIN_ROWS = 6  # Need VIN, VOUT, power rails, and at least one work row
 
