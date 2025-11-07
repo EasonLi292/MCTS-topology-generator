@@ -112,17 +112,34 @@ These rules ensure only physically realizable circuits are simulated.
 
 **Heuristic Rewards** (for incomplete circuits during exploration):
 ```
-Reward = (num_components × 5.0) +
-         (num_unique_types × 8.0) +
-         connection_bonus
+Base Reward = (num_components × 5.0) +
+              (num_unique_types × 8.0) +
+              connection_bonus
 
 Where connection_bonus:
   +20.0  if VIN-VOUT connected with components
   +5.0   if VIN-VOUT connected but empty
   -2.0   if VIN-VOUT not connected
+  +10.0  if supply rails connected
+
+Progressive Bonuses (guide search toward valid circuits):
+  +8.0   if circuit touches VDD
+  +8.0   if circuit touches VSS
+  +15.0  if VOUT reachable from VIN
+  +10.0  if all components electrically connected
+
+Total Reward = Base Reward + Progressive Bonuses
+
+Penalties (invalid configurations):
+  -25.0  if VIN or VOUT on power rails
+  -20.0  if VIN and VOUT not distinct
+  -15.0  if degenerate component structure
 ```
 
-**Typical heuristic range**: 20-60 points
+**Typical heuristic range**:
+- Simple circuits (2-3 components): 40-70 points
+- Well-connected circuits: 70-120 points
+- Invalid configurations: negative to 20 points
 
 **SPICE Rewards** (for complete circuits ≥3 components):
 ```
@@ -156,9 +173,9 @@ SPICE rewards are designed to **massively dominate** heuristic rewards:
 
 This ensures MCTS heavily prioritizes finding valid, working circuits over exploration.
 
-**Example**: RC Low-Pass Filter
-- Heuristic: 59.0 points
-- SPICE: 611.4 points (10.7× advantage)
+**Example**: RC Low-Pass Filter (with power connections)
+- Heuristic: 82.0 points (with progressive bonuses)
+- SPICE: 611.4 points (7.4× advantage)
 
 ## Key Features
 
@@ -232,14 +249,15 @@ MCTS-topology-generator/
 ## Example Circuits
 
 ### CMOS Inverter
-- Components: PMOS + NMOS + Resistor
-- Validation: ✅ All rules passed
-- Reward: ~31 points (flat AC response)
+- Components: PMOS + NMOS
+- Validation: ⚠️ Only 2 components (needs 3+ for SPICE)
+- Heuristic Reward: ~46 points (base formula only)
 
 ### RC Low-Pass Filter
-- Components: Resistor + Capacitor + Inductor
+- Components: Resistor + Capacitor + Inductor + additional components
 - Validation: ✅ All rules passed
-- Reward: ~632 points (frequency-dependent)
+- Heuristic Reward: ~82 points (with progressive bonuses)
+- SPICE Reward: ~42-632 points (frequency-dependent)
 
 Both circuits demonstrate proper SPICE netlist generation and validation.
 
