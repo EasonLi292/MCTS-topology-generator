@@ -235,7 +235,6 @@ class Breadboard:
             return False
 
         # ROW-BASED CONNECTIVITY MODEL:
-        # Each row is treated as a single electrical net (like a real breadboard).
         # When VIN is placed at (VIN_ROW, 0), the entire VIN_ROW becomes the VIN net.
         # Wires can connect to any column in a row since all columns are electrically unified.
         # The union-find structure (uf_parent) maintains one entry per row, not per cell.
