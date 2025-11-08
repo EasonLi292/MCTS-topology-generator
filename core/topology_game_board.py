@@ -239,13 +239,27 @@ class Breadboard:
         # Wires can connect to any column in a row since all columns are electrically unified.
         # The union-find structure (uf_parent) maintains one entry per row, not per cell.
 
-        forbidden_pairs = [
-            {(self.VIN_ROW, 0), (self.VSS_ROW, 0)},
-            {(self.VOUT_ROW, 0), (self.VDD_ROW, 0)},
+        # Forbidden net pairs (check union-find roots to detect indirect connections)
+        # Need to check which nets the special rows belong to
+        vin_net_root = self.find(self.VIN_ROW)
+        vout_net_root = self.find(self.VOUT_ROW)
+        vss_net_root = self.find(self.VSS_ROW)
+        vdd_net_root = self.find(self.VDD_ROW)
+
+        # Get the actual nets that would be connected by this wire
+        r1_net = self.find(r1)
+        r2_net = self.find(r2)
+
+        # Forbidden net pairs
+        forbidden_net_pairs = [
+            {vin_net_root, vss_net_root},    # VIN cannot connect to VSS
+            {vout_net_root, vdd_net_root},   # VOUT cannot connect to VDD
+            {vss_net_root, vout_net_root},   # VSS cannot connect to VOUT
+            {vin_net_root, vout_net_root},   # VIN cannot connect to VOUT
         ]
-        endpoints = { (r1, c1), (r2, c2) }
-        for pair in forbidden_pairs:
-            if endpoints == pair:
+        endpoint_nets = {r1_net, r2_net}
+        for pair in forbidden_net_pairs:
+            if endpoint_nets == pair:
                 return False
 
         # Check if positions are within bounds
@@ -1165,11 +1179,19 @@ def run_tests():
     print("\n--- Test 4: Circuit Completion and Reward ---")
     assert not b2.is_complete_and_valid()
     assert b2.get_reward() == 0.0
-    # Connect vin to resistor and resistor to vout (resistor pins are already auto-connected)
-    b3 = b2.apply_action(('wire', b0.VIN_ROW, 0, 5, 1))  # VIN (row 1) to resistor
-    # Then connect to vout at row 28
-    b4 = b3.apply_action(('wire', 10, 1, b0.VOUT_ROW, 0))  # Connect to VOUT (row 28)
-    assert b4.is_complete_and_valid(), "Circuit should be complete after connecting VIN and VOUT nets."
+    # Build a complete circuit: VIN -> R1 -> R2 -> VOUT, with R3 to VSS and R4 to VDD
+    # Place R2 to extend circuit
+    b3 = b2.apply_action(('resistor', 7, 2))  # R2 at rows 7-8
+    b3 = b3.apply_action(('wire', 6, 1, 7, 2))  # Connect R1 to R2
+    # Place R3 connecting to VSS (component pins must touch VSS)
+    b3 = b3.apply_action(('resistor', b0.VSS_ROW, 2))  # R3 at VSS_ROW to VSS_ROW+1
+    b3 = b3.apply_action(('wire', 7, 2, b0.VSS_ROW + 1, 2))  # Connect R2 to R3
+    # Place R4 connecting to VDD
+    b3 = b3.apply_action(('resistor', b0.VDD_ROW - 1, 3))  # R4 at VDD_ROW-1 to VDD_ROW
+    b4 = b3.apply_action(('wire', 8, 2, b0.VDD_ROW - 1, 3))  # Connect R2 to R4
+    # Connect to VOUT
+    b4 = b4.apply_action(('wire', 8, 2, b0.VOUT_ROW, 0))  # Connect to VOUT
+    assert b4.is_complete_and_valid(), "Circuit should be complete after connecting VIN, VOUT, and power rails."
     assert b4.get_reward() > 0.0
     print("✅ Passed: Circuit completion and reward logic are working.")
 
@@ -1189,14 +1211,18 @@ def test_netlist_conversion():
 
     # --- Test 2: Simple RC Circuit ---
     print("\n--- Test 2: Simple RC Circuit Netlist ---")
-    # Build: VIN -> Resistor -> Capacitor -> VOUT
-    # Component pins are now auto-connected, only need wires between components
+    # Build: VIN -> Resistor -> Capacitor -> VOUT, with power rail connections
     b1 = Breadboard()
     b1 = b1.apply_action(('resistor', 5, 1))  # R on rows 5-6 (pins auto-connected)
-    b1 = b1.apply_action(('wire', b1.VIN_ROW, 0, 5, 1))  # Connect VIN (row 1) to R pin 1
+    b1 = b1.apply_action(('wire', b1.VIN_ROW, 0, 5, 1))  # Connect VIN to R pin 1
     b1 = b1.apply_action(('capacitor', 7, 2))  # C on rows 7-8 (pins auto-connected)
     b1 = b1.apply_action(('wire', 6, 1, 7, 2))  # Connect R pin 2 to C pin 1
-    b1 = b1.apply_action(('wire', 8, 2, b1.VOUT_ROW, 0))  # Connect C pin 2 to VOUT (row 28)
+    # Add power rail connections
+    b1 = b1.apply_action(('resistor', b1.VSS_ROW, 2))  # R2 touching VSS
+    b1 = b1.apply_action(('wire', 7, 2, b1.VSS_ROW + 1, 2))  # Connect C to R2
+    b1 = b1.apply_action(('resistor', b1.VDD_ROW - 1, 3))  # R3 touching VDD
+    b1 = b1.apply_action(('wire', 8, 2, b1.VDD_ROW - 1, 3))  # Connect C to R3
+    b1 = b1.apply_action(('wire', 8, 2, b1.VOUT_ROW, 0))  # Connect to VOUT
 
     netlist = b1.to_netlist()
     assert netlist is not None, "Complete circuit should return a netlist"
@@ -1212,11 +1238,16 @@ def test_netlist_conversion():
     # --- Test 3: Multiple Components of Same Type ---
     print("\n--- Test 3: Multiple Components of Same Type ---")
     b2 = Breadboard()
-    b2 = b2.apply_action(('resistor', 5, 1))  # R1 on rows 5-6 (pins auto-connected)
+    b2 = b2.apply_action(('resistor', 5, 1))  # R1 on rows 5-6
     b2 = b2.apply_action(('wire', b2.VIN_ROW, 0, 5, 1))  # Connect VIN to R1
-    b2 = b2.apply_action(('resistor', 7, 2))  # R2 on rows 7-8 (pins auto-connected)
+    b2 = b2.apply_action(('resistor', 7, 2))  # R2 on rows 7-8
     b2 = b2.apply_action(('wire', 6, 1, 7, 2))  # Connect R1 to R2
-    b2 = b2.apply_action(('wire', 8, 2, b2.VOUT_ROW, 0))  # Connect R2 to VOUT
+    # Add power rail connections
+    b2 = b2.apply_action(('resistor', b2.VSS_ROW, 2))  # R3 touching VSS
+    b2 = b2.apply_action(('wire', 7, 2, b2.VSS_ROW + 1, 2))
+    b2 = b2.apply_action(('resistor', b2.VDD_ROW - 1, 3))  # R4 touching VDD
+    b2 = b2.apply_action(('wire', 8, 2, b2.VDD_ROW - 1, 3))
+    b2 = b2.apply_action(('wire', 8, 2, b2.VOUT_ROW, 0))  # Connect to VOUT
 
     netlist2 = b2.to_netlist()
     assert netlist2 is not None
@@ -1232,6 +1263,11 @@ def test_netlist_conversion():
     b3 = Breadboard()
     b3 = b3.apply_action(('resistor', 5, 1))  # Resistor pins auto-connected
     b3 = b3.apply_action(('wire', b3.VIN_ROW, 0, 5, 1))
+    # Add power rail connections
+    b3 = b3.apply_action(('resistor', b3.VSS_ROW, 2))
+    b3 = b3.apply_action(('wire', 5, 1, b3.VSS_ROW + 1, 2))
+    b3 = b3.apply_action(('resistor', b3.VDD_ROW - 1, 3))
+    b3 = b3.apply_action(('wire', 6, 1, b3.VDD_ROW - 1, 3))
     b3 = b3.apply_action(('wire', 6, 1, b3.VOUT_ROW, 0))
 
     netlist3 = b3.to_netlist()
@@ -1248,6 +1284,11 @@ def test_netlist_conversion():
     b4 = Breadboard()
     b4 = b4.apply_action(('nmos3', 5, 1))  # NMOS on rows 5-6-7 (drain, gate, source - pins auto-connected)
     b4 = b4.apply_action(('wire', b4.VIN_ROW, 0, 5, 1))  # VIN to drain
+    # Add power rail connections
+    b4 = b4.apply_action(('resistor', b4.VSS_ROW, 2))
+    b4 = b4.apply_action(('wire', 5, 1, b4.VSS_ROW + 1, 2))
+    b4 = b4.apply_action(('resistor', b4.VDD_ROW - 1, 3))
+    b4 = b4.apply_action(('wire', 7, 1, b4.VDD_ROW - 1, 3))
     b4 = b4.apply_action(('wire', 7, 1, b4.VOUT_ROW, 0))  # source to VOUT
 
     netlist4 = b4.to_netlist()
@@ -1258,16 +1299,19 @@ def test_netlist_conversion():
 
     # --- Test 6: Proper Multi-Net RC Low-Pass Filter ---
     print("\n--- Test 6: Proper Multi-Net RC Low-Pass Filter ---")
-    # Build a proper RC low-pass filter: VIN --R-- net1 --C-- GND, VOUT at net1
+    # Build a proper RC low-pass filter: VIN --R-- net1 --C-- VSS, VOUT at net1, with VDD connection
     b5 = Breadboard()
     # First wire VIN to work area
     b5 = b5.apply_action(('wire', b5.VIN_ROW, 0, 10, 1))  # Activate row 10
     # Place resistor between input and middle node
     b5 = b5.apply_action(('resistor', 10, 1))  # R on rows 10-11 (pins auto-connected)
-    # Place capacitor from middle node to ground
+    # Place capacitor from middle node to VSS
     b5 = b5.apply_action(('capacitor', 12, 2))  # C on rows 12-13 (pins auto-connected)
     b5 = b5.apply_action(('wire', 11, 1, 12, 2))  # R output to C input
     b5 = b5.apply_action(('wire', 13, 2, 0, 2))  # C to VSS (ground)
+    # Add VDD connection
+    b5 = b5.apply_action(('resistor', b5.VDD_ROW - 1, 3))  # R2 touching VDD
+    b5 = b5.apply_action(('wire', 11, 1, b5.VDD_ROW - 1, 3))  # Connect to VDD
     # Connect VOUT to the middle node (between R and C)
     b5 = b5.apply_action(('wire', 11, 1, b5.VOUT_ROW, 0))  # Middle node to VOUT
 
