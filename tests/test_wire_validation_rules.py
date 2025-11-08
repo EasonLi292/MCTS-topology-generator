@@ -38,37 +38,41 @@ def test_same_row_wire_rejected():
 
 
 def test_vin_vout_column_leak_prevention():
-    """Test that wires cannot connect to VIN/VOUT rows at columns != 0."""
-    print("\n=== Test 2: VIN/VOUT Column Leak Prevention ===")
+    """Test row-based connectivity: all columns in a row are electrically connected."""
+    print("\n=== Test 2: Row-Based Connectivity (Real Breadboard Model) ===")
 
     b = Breadboard()
     work_row = b.WORK_START_ROW
 
-    # VIN is at (VIN_ROW, 0). Trying to wire to (VIN_ROW, 1) should fail
+    # ROW-BASED MODEL: Each row is a single electrical net (like a real breadboard)
+    # VIN is at (VIN_ROW, 0), which makes the ENTIRE VIN_ROW the VIN net
+    # Therefore, wiring to any column in VIN_ROW should connect to VIN
+
+    # Wire to (VIN_ROW, 1) should work - it's the same net as (VIN_ROW, 0)
     can_place_vin_col1 = b.can_place_wire(work_row, 1, b.VIN_ROW, 1)
-    assert not can_place_vin_col1, "Wire to VIN_ROW at column != 0 should be rejected"
+    assert can_place_vin_col1, "Wire to VIN_ROW at any column should be allowed (row-based)"
 
-    # Try another column on VIN row
+    # Wire to (VIN_ROW, 3) should also work - entire row is VIN net
     can_place_vin_col3 = b.can_place_wire(work_row, 2, b.VIN_ROW, 3)
-    assert not can_place_vin_col3, "Wire to VIN_ROW at column 3 should be rejected"
+    assert can_place_vin_col3, "Wire to VIN_ROW at column 3 should be allowed (row-based)"
 
-    # VOUT is at (VOUT_ROW, 0). Trying to wire to (VOUT_ROW, 2) should fail
+    # VOUT is at (VOUT_ROW, 0), so entire VOUT_ROW is VOUT net
+    # Wire to (VOUT_ROW, 2) should work
     can_place_vout_col2 = b.can_place_wire(work_row, 1, b.VOUT_ROW, 2)
-    assert not can_place_vout_col2, "Wire to VOUT_ROW at column != 0 should be rejected"
+    assert can_place_vout_col2, "Wire to VOUT_ROW at any column should be allowed (row-based)"
 
-    # Try another column on VOUT row
+    # Wire to (VOUT_ROW, 5) should also work
     can_place_vout_col5 = b.can_place_wire(work_row, 3, b.VOUT_ROW, 5)
-    assert not can_place_vout_col5, "Wire to VOUT_ROW at column 5 should be rejected"
+    assert can_place_vout_col5, "Wire to VOUT_ROW at column 5 should be allowed (row-based)"
 
-    # But wiring to (VIN_ROW, 0) should work (that's where VIN is)
+    # Verify that wiring to column 0 still works (original position)
     can_place_vin_col0 = b.can_place_wire(work_row, 1, b.VIN_ROW, 0)
-    assert can_place_vin_col0, "Wire to VIN_ROW at column 0 should be allowed"
+    assert can_place_vin_col0, "Wire to VIN_ROW at column 0 should still work"
 
-    # And wiring to (VOUT_ROW, 0) should work (that's where VOUT is)
     can_place_vout_col0 = b.can_place_wire(work_row, 1, b.VOUT_ROW, 0)
-    assert can_place_vout_col0, "Wire to VOUT_ROW at column 0 should be allowed"
+    assert can_place_vout_col0, "Wire to VOUT_ROW at column 0 should still work"
 
-    print("✅ PASSED: VIN/VOUT column leak prevention working correctly")
+    print("✅ PASSED: Row-based connectivity working correctly (real breadboard model)")
 
 
 def test_forbidden_vin_vss_direct_wire():

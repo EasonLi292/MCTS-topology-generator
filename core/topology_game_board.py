@@ -5,6 +5,13 @@ This module provides a virtual breadboard environment for placing electronic
 components and wiring them together. It enforces electrical connectivity rules
 and validates circuit topologies.
 
+ROW-BASED CONNECTIVITY MODEL:
+- Each row functions as a single electrical net (like a real breadboard)
+- All columns in a row are electrically connected
+- Union-find structure maintains one entry per row (not per cell)
+- Components must be placed on active rows (rows connected to VIN/VOUT/power)
+- Wires extend the active network by connecting entire rows
+
 Refactored to follow SOLID principles with small, focused methods.
 """
 
@@ -118,19 +125,48 @@ class Breadboard:
         self.component_counter = 0
         self.vin_placed = False
         self.vout_placed = False
+        # ROW-BASED CONNECTIVITY MODEL (like a real breadboard):
+        # - Each row is a single electrical net (all columns electrically connected)
+        # - uf_parent has one entry per row (not per cell)
+        # - Wiring between rows unions entire rows, not just specific cells
+        # - When VIN is at (1, 0), all of row 1 is the VIN net
         self.uf_parent: List[int] = list(range(self.ROWS))
-        self.active_nets: Set[int] = {self.find(self.VSS_ROW), self.find(self.VDD_ROW)}
+        # Initialize active nets with all special rows (power rails and I/O)
+        self.active_nets: Set[int] = {
+            self.find(self.VSS_ROW),
+            self.find(self.VDD_ROW),
+            self.find(self.VIN_ROW),
+            self.find(self.VOUT_ROW)
+        }
         self.placed_wires: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
         # Place VIN and VOUT on dedicated reserved rows
         self._place_component('vin', self.VIN_ROW, 0)
         self._place_component('vout', self.VOUT_ROW, 0)
 
     def find(self, row: int) -> int:
+        """Find the root net ID for a given row (union-find with path compression).
+
+        Args:
+            row: Row index (0 to ROWS-1)
+
+        Returns:
+            Root row ID representing the electrical net this row belongs to
+        """
         if self.uf_parent[row] != row:
             self.uf_parent[row] = self.find(self.uf_parent[row])
         return self.uf_parent[row]
 
     def union(self, row1: int, row2: int):
+        """Unite two rows into the same electrical net.
+
+        This merges entire rows - all columns in row1 and row2 become part
+        of the same electrical net. This is the core operation that implements
+        row-based connectivity.
+
+        Args:
+            row1: First row to unite
+            row2: Second row to unite
+        """
         root1 = self.find(row1)
         root2 = self.find(row2)
         if root1 != root2:
@@ -162,10 +198,11 @@ class Breadboard:
             return False
         pin_rows = range(start_row, start_row + info.pin_count)
 
-        # FIXED: Prevent components from having pins ON VIN/VOUT rows
+        # Prevent components from having pins ON VIN/VOUT rows
         # Components can only be placed in the work area (rows 2-12 for 15-row board)
-        # This prevents electrical conflicts where component pins share a row with VIN/VOUT
-        # but are on different nets due to different columns
+        # This keeps VIN/VOUT rows reserved for signal I/O only
+        # Since entire rows are unified electrically, placing a component on VIN/VOUT row
+        # would make that component's pins part of the I/O net (usually undesirable)
         min_allowed_row = self.WORK_START_ROW  # Start after VIN row
         max_allowed_row = self.WORK_END_ROW    # End before VOUT row
         if not (min_allowed_row <= pin_rows.start and pin_rows.stop - 1 <= max_allowed_row):
@@ -176,17 +213,11 @@ class Breadboard:
         if info.pin_count == 1:
             return not self.is_row_active(start_row)
 
-        # FIXED: Allow component placement if ANY pin touches an active row
-        # OR if component is adjacent to VIN/VOUT (can bridge to them via wires)
+        # Component can only be placed if at least one pin touches an active net
+        # This ensures circuits are built by extending from active nets with wires first
         pins_touch_active = any(self.is_row_active(r) for r in pin_rows)
 
-        # Also allow if component is adjacent to VIN or VOUT rows (can be wired later)
-        adjacent_to_io = (
-            (pin_rows.start == self.VIN_ROW + 1) or  # Just after VIN
-            (pin_rows.stop - 1 == self.VOUT_ROW - 1)  # Just before VOUT
-        )
-
-        return pins_touch_active or adjacent_to_io
+        return pins_touch_active
 
     def can_place_wire(self, r1: int, c1: int, r2: int, c2: int) -> bool:
         """
@@ -203,20 +234,11 @@ class Breadboard:
         if r1 == r2:
             return False
 
-        # RELAXED: VIN can now connect to any component/position (not just MOSFET gates)
-        # This allows more circuit topologies to be explored
-
-        # FIXED: Prevent wires from landing on VIN/VOUT rows at columns != 0
-        # VIN and VOUT are at column 0, so wires to other columns on these rows
-        # would be on the same row but different electrical nets
-        if r1 == self.VIN_ROW and c1 != 0:
-            return False
-        if r2 == self.VIN_ROW and c2 != 0:
-            return False
-        if r1 == self.VOUT_ROW and c1 != 0:
-            return False
-        if r2 == self.VOUT_ROW and c2 != 0:
-            return False
+        # ROW-BASED CONNECTIVITY MODEL:
+        # Each row is treated as a single electrical net (like a real breadboard).
+        # When VIN is placed at (VIN_ROW, 0), the entire VIN_ROW becomes the VIN net.
+        # Wires can connect to any column in a row since all columns are electrically unified.
+        # The union-find structure (uf_parent) maintains one entry per row, not per cell.
 
         forbidden_pairs = [
             {(self.VIN_ROW, 0), (self.VSS_ROW, 0)},
@@ -560,7 +582,11 @@ class Breadboard:
         return (comp_count * 10.0) + (unique_types * 5.0) - (wire_count * 1.0)
     
     def _place_component(self, comp_type: str, start_row: int, col: int) -> Optional[Component]:
-        """(Internal) Mutates the board state by placing a component."""
+        """(Internal) Mutates the board state by placing a component.
+
+        Note: Each component pin activates its ENTIRE ROW (not just the specific cell).
+        Multi-pin components automatically unite their rows into a single net.
+        """
         info = COMPONENT_CATALOG[comp_type]
         self.component_counter += 1
         component = Component(
@@ -585,8 +611,14 @@ class Breadboard:
         return component
 
     def _place_wire(self, r1: int, c1: int, r2: int, c2: int) -> Optional[Component]:
+        """(Internal) Mutates the board state by placing a wire.
+
+        Note: Wire unions ENTIRE ROWS (r1 and r2), not just the specific cells.
+        This is consistent with the row-based connectivity model where each row
+        is a single electrical net.
+        """
         self.placed_wires.add(tuple(sorted(((r1, c1), (r2, c2)))))
-        self.union(r1, r2)
+        self.union(r1, r2)  # Unions entire rows, not just (r1,c1) and (r2,c2) cells
         self.component_counter += 1
         component = Component(type="wire", pins=[(r1, c1), (r2, c2)], id=self.component_counter)
         self.placed_components.append(component)

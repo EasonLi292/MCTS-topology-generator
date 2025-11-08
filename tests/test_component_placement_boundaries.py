@@ -90,50 +90,51 @@ def test_cannot_place_multipin_spanning_vin_row():
 
 
 def test_can_place_adjacent_to_vin():
-    """Test that components CAN be placed adjacent to VIN (exception path)."""
-    print("\n=== Test 4: Can Place Adjacent to VIN (Exception Path) ===")
+    """Test that components require wire connections before placement (no adjacency exception)."""
+    print("\n=== Test 4: Components Require Active Net Connection ===")
 
     b = Breadboard()
 
     # VIN_ROW is at row 1, so VIN_ROW + 1 = row 2 (WORK_START_ROW)
-    # Components starting at WORK_START_ROW should be allowed (adjacent to VIN)
-    can_place_adjacent = b.can_place_component('resistor', b.VIN_ROW + 1, 2)
+    # Components cannot be placed without active net connection (adjacency removed)
+    can_place_without_wire = b.can_place_component('resistor', b.VIN_ROW + 1, 2)
 
-    # This should be allowed by the adjacent_to_io exception at line 154
-    assert can_place_adjacent, "Component adjacent to VIN should be allowed (exception path)"
+    # This should be FALSE because no wire has activated the row yet
+    assert not can_place_without_wire, "Component should NOT be placeable without wire activation"
 
-    # 3-pin component starting at VIN_ROW + 1 should also work
-    can_place_nmos_adjacent = b.can_place_component('nmos3', b.VIN_ROW + 1, 3)
+    # Now wire from VIN to activate the row
+    b = b.apply_action(('wire', b.VIN_ROW, 0, b.VIN_ROW + 1, 2))
 
-    assert can_place_nmos_adjacent, "NMOS adjacent to VIN should be allowed (exception path)"
+    # Now placement should work
+    can_place_with_wire = b.can_place_component('resistor', b.VIN_ROW + 1, 2)
+    assert can_place_with_wire, "Component should be placeable after wire activation"
 
-    print("✅ PASSED: Adjacent to VIN placement exception working correctly")
+    print("✅ PASSED: Component placement requires wire activation")
 
 
 def test_can_place_adjacent_to_vout():
-    """Test that components CAN be placed adjacent to VOUT (exception path)."""
-    print("\n=== Test 5: Can Place Adjacent to VOUT (Exception Path) ===")
+    """Test that components near VOUT also require wire connections."""
+    print("\n=== Test 5: Components Near VOUT Require Active Net ===")
 
     b = Breadboard()
 
     # VOUT_ROW is at row ROWS-2, so VOUT_ROW - 1 = row ROWS-3 (WORK_END_ROW)
-    # A 2-pin component ENDING at WORK_END_ROW should be allowed (adjacent to VOUT)
-    # If WORK_END_ROW is row N, a 2-pin component starts at N-1 and ends at N
+    # A 2-pin component ENDING at WORK_END_ROW should NOT be placeable without activation
     start_row = b.VOUT_ROW - 2  # This will end at VOUT_ROW - 1 (just before VOUT)
 
-    can_place_adjacent = b.can_place_component('resistor', start_row, 2)
+    can_place_without_wire = b.can_place_component('resistor', start_row, 2)
 
-    # This should be allowed by the adjacent_to_io exception at line 155
-    assert can_place_adjacent, "Component adjacent to VOUT should be allowed (exception path)"
+    # This should be FALSE because no wire has activated the rows yet
+    assert not can_place_without_wire, "Component should NOT be placeable near VOUT without activation"
 
-    # 3-pin component ending at VOUT_ROW - 1 should also work
-    start_row_nmos = b.VOUT_ROW - 3  # Ends at VOUT_ROW - 1
+    # Wire from VIN through the work area to activate the target row
+    b = b.apply_action(('wire', b.VIN_ROW, 0, start_row, 2))
 
-    can_place_nmos_adjacent = b.can_place_component('nmos3', start_row_nmos, 3)
+    # Now placement should work
+    can_place_with_wire = b.can_place_component('resistor', start_row, 2)
+    assert can_place_with_wire, "Component should be placeable after wire activation"
 
-    assert can_place_nmos_adjacent, "NMOS adjacent to VOUT should be allowed (exception path)"
-
-    print("✅ PASSED: Adjacent to VOUT placement exception working correctly")
+    print("✅ PASSED: Components near VOUT require wire activation")
 
 
 def test_work_area_boundaries_enforced():
@@ -149,17 +150,20 @@ def test_work_area_boundaries_enforced():
     print(f"  VSS_ROW={b.VSS_ROW}, VDD_ROW={b.VDD_ROW}")
 
     # Test placement at various boundary positions
-    # Note: Component placement requires either pins_touch_active OR adjacent_to_io
+    # Note: Component placement requires pins_touch_active (wire connection required)
 
-    # 1. Valid placement at start of work area (adjacent to VIN)
-    # WORK_START_ROW = VIN_ROW + 1, so this satisfies adjacent_to_io condition
+    # 1. Cannot place at start of work area without wire activation
+    can_place_without_wire = b.can_place_component('resistor', b.WORK_START_ROW, 1)
+    assert not can_place_without_wire, f"Should NOT be able to place at WORK_START_ROW without wire activation"
+
+    # 1b. Wire from VIN to activate the row, then place component
+    b = b.apply_action(('wire', b.VIN_ROW, 0, b.WORK_START_ROW, 1))
     can_place_start = b.can_place_component('resistor', b.WORK_START_ROW, 1)
-    assert can_place_start, f"Should be able to place at WORK_START_ROW ({b.WORK_START_ROW}) - adjacent to VIN"
+    assert can_place_start, f"Should be able to place at WORK_START_ROW ({b.WORK_START_ROW}) after wire activation"
 
     # 2. Valid placement in middle of work area (after activating the row)
-    # First, place and wire a component to activate middle rows
+    # First, place a component on the already-activated row
     b = b.apply_action(('resistor', b.WORK_START_ROW, 1))
-    b = b.apply_action(('wire', b.VIN_ROW, 0, b.WORK_START_ROW, 1))
 
     # Now wire to middle row to activate it
     mid_row = b.WORK_START_ROW + 3
@@ -169,11 +173,12 @@ def test_work_area_boundaries_enforced():
     can_place_middle = b.can_place_component('capacitor', mid_row, 3)
     assert can_place_middle, f"Should be able to place in middle of work area after activation (row {mid_row})"
 
-    # 3. Valid placement ending at end of work area (adjacent to VOUT)
+    # 3. Valid placement ending at end of work area (after activation)
     # A 2-pin component at WORK_END_ROW - 1 ends at WORK_END_ROW
-    # WORK_END_ROW = VOUT_ROW - 1, so ending at WORK_END_ROW satisfies adjacent_to_io condition
+    # First need to activate the row via wire
+    b = b.apply_action(('wire', mid_row, 2, b.WORK_END_ROW - 1, 4))
     can_place_end = b.can_place_component('inductor', b.WORK_END_ROW - 1, 4)
-    assert can_place_end, f"Should be able to place ending at WORK_END_ROW ({b.WORK_END_ROW}) - adjacent to VOUT"
+    assert can_place_end, f"Should be able to place ending at WORK_END_ROW ({b.WORK_END_ROW}) after activation"
 
     # 4. Invalid: Component extending beyond WORK_END_ROW
     # A 2-pin component at WORK_END_ROW would extend to WORK_END_ROW + 1 (which is VOUT_ROW)

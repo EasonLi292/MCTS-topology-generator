@@ -54,13 +54,15 @@ def test_can_place_multiple_allows_multiple_regular_components():
 
     b = Breadboard()
 
-    # Place first resistor
+    # First activate a row by wiring from VIN
     r1_row = b.WORK_START_ROW
+    b = b.apply_action(('wire', b.VIN_ROW, 0, r1_row, 1))  # Activate r1_row first
+
+    # Now place first resistor on the activated row
     can_place_r1 = b.can_place_component('resistor', r1_row, 1)
-    assert can_place_r1, "Should be able to place first resistor"
+    assert can_place_r1, "Should be able to place first resistor on active row"
 
     b = b.apply_action(('resistor', r1_row, 1))
-    b = b.apply_action(('wire', b.VIN_ROW, 0, r1_row, 1))  # Activate the row
 
     # Try to place second resistor (should succeed)
     r2_row = r1_row + 3
