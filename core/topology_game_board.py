@@ -30,17 +30,17 @@ class ComponentInfo:
         pin_count (int): Number of pins the component has (e.g., 2 for resistor, 3 for transistor).
             **ACTIVELY USED** - Determines component size and placement validation.
 
-        vertical_only (bool): **RESERVED FOR FUTURE USE** - Not currently enforced.
+        vertical_only (bool):
             All components are placed vertically in the current implementation.
             Wire placement uses separate logic in can_place_wire().
             Consider removing or implementing if horizontal placement is needed.
 
-        pin_names (List[str]): **RESERVED FOR FUTURE USE** - Not currently used.
+        pin_names (List[str]): 
             Symbolic names for each pin (e.g., ['drain', 'gate', 'source'] for MOSFETs).
             Could be used for enhanced netlist generation or validation.
             Consider removing if not needed, or document intended use case.
 
-        can_place_multiple (bool): **ACTIVELY USED** - Enforced in can_place_component() (line 130).
+        can_place_multiple (bool): 
             If False, prevents placing more than one instance of this component type.
             Used for VIN and VOUT to ensure only one of each exists on the board.
             Default: True (most components can have multiple instances).
