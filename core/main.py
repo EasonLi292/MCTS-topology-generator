@@ -202,9 +202,9 @@ def _save_best_candidate(mcts: MCTS, iterations: int):
 
             # Generate and save visualization with MCTS stats
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            # Get SPICE stats from MCTS (if available)
-            spice_success = getattr(mcts, 'spice_success_count', 0)
-            spice_fail = getattr(mcts, 'spice_fail_count', 0)
+            # Get SPICE stats from MCTS stats object
+            spice_success = mcts.stats.spice_success_count if mcts.stats else 0
+            spice_fail = mcts.stats.spice_fail_count if mcts.stats else 0
             visualization = _generate_circuit_visualization(
                 mcts.best_candidate_state,
                 mcts.best_candidate_reward,

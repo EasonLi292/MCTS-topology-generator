@@ -140,6 +140,7 @@ class MCTS:
         self.root = MCTSNode(initial_state)
         self.best_candidate_state = None
         self.best_candidate_reward = 0.0
+        self.stats = None  # Will be set during search()
 
     def search(self, iterations: int):
         """
@@ -148,15 +149,15 @@ class MCTS:
         Args:
             iterations: Number of MCTS iterations to perform
         """
-        stats = CircuitStatistics()
+        self.stats = CircuitStatistics()
 
         for i in range(iterations):
             # Print progress every 1000 iterations
             if (i % 1000 == 0):
-                stats.print_progress(i, iterations)
+                self.stats.print_progress(i, iterations)
 
             # Execute one MCTS iteration
-            self._execute_iteration(stats)
+            self._execute_iteration(self.stats)
 
         print("Search complete.")
 
