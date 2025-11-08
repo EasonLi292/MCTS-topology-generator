@@ -239,27 +239,18 @@ class Breadboard:
         # Wires can connect to any column in a row since all columns are electrically unified.
         # The union-find structure (uf_parent) maintains one entry per row, not per cell.
 
-        # Forbidden net pairs (check union-find roots to detect indirect connections)
-        # Need to check which nets the special rows belong to
-        vin_net_root = self.find(self.VIN_ROW)
-        vout_net_root = self.find(self.VOUT_ROW)
-        vss_net_root = self.find(self.VSS_ROW)
-        vdd_net_root = self.find(self.VDD_ROW)
-
-        # Get the actual nets that would be connected by this wire
-        r1_net = self.find(r1)
-        r2_net = self.find(r2)
-
-        # Forbidden net pairs
-        forbidden_net_pairs = [
-            {vin_net_root, vss_net_root},    # VIN cannot connect to VSS
-            {vout_net_root, vdd_net_root},   # VOUT cannot connect to VDD
-            {vss_net_root, vout_net_root},   # VSS cannot connect to VOUT
-            {vin_net_root, vout_net_root},   # VIN cannot connect to VOUT
+        # Forbidden row pairs - only forbid DIRECT wires between special I/O/power rows
+        # Don't use union-find nets here, as circuits SHOULD connect VIN to VOUT through components
+        # We only want to prevent direct shorts between incompatible special rows
+        forbidden_row_pairs = [
+            {self.VIN_ROW, self.VSS_ROW},    # VIN row cannot wire to VSS row
+            {self.VOUT_ROW, self.VDD_ROW},   # VOUT row cannot wire to VDD row
+            {self.VSS_ROW, self.VOUT_ROW},   # VSS row cannot wire to VOUT row
+            {self.VIN_ROW, self.VOUT_ROW},   # VIN row cannot wire to VOUT row (direct short)
         ]
-        endpoint_nets = {r1_net, r2_net}
-        for pair in forbidden_net_pairs:
-            if endpoint_nets == pair:
+        endpoint_rows = {r1, r2}
+        for pair in forbidden_row_pairs:
+            if endpoint_rows == pair:
                 return False
 
         # Check if positions are within bounds

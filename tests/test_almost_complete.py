@@ -117,6 +117,9 @@ def test_one_wire_away():
     assert is_complete_after, "Circuit should be complete after adding final wire"
     assert len(stop_actions_after) > 0, "STOP action should be available after completion"
 
+    print("\n✅ TEST 1 PASSED")
+    return True
+
 
 def test_two_steps_away():
     """Test 2: Circuit is two steps away from being valid."""
@@ -170,13 +173,16 @@ def test_two_steps_away():
         board_incomplete = board_incomplete.apply_action(action)
 
     mcts = MCTS(board_incomplete)
-    mcts.search(iterations=1000)
+    mcts.search(iterations=3000)
 
     print(f"  MCTS found valid circuit: {mcts.best_candidate_state.is_complete_and_valid() if mcts.best_candidate_state else False}")
     print(f"  Best reward: {mcts.best_candidate_reward:.2f}")
 
     assert is_complete_before is False, "Circuit should not be complete before adding final wires"
     assert is_complete_after, "Circuit should be complete after adding both wires"
+
+    print("\n✅ TEST 2 PASSED")
+    return True
 
 
 def test_components_placed_need_wiring():
@@ -226,12 +232,15 @@ def test_components_placed_need_wiring():
     board_comps = board_comps.apply_action(('resistor', 7, 3))
 
     mcts = MCTS(board_comps)
-    mcts.search(iterations=2000)
+    mcts.search(iterations=5000)
 
     print(f"  MCTS found valid circuit: {mcts.best_candidate_state.is_complete_and_valid() if mcts.best_candidate_state else False}")
     print(f"  Best reward: {mcts.best_candidate_reward:.2f}")
 
     assert is_complete, "Circuit should be complete after adding all wires"
+
+    print("\n✅ TEST 3 PASSED")
+    return True
 
 
 def run_all_tests():
