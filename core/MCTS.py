@@ -11,6 +11,9 @@ from spice_simulator import run_ac_simulation, calculate_reward_from_simulation
 INCOMPLETE_REWARD_CAP = 40.0
 COMPLETION_BASELINE_REWARD = 45.0
 
+# Deterministic expansion order for reproducibility
+random.seed(1)
+
 
 class MCTSNode:
     """
@@ -84,7 +87,8 @@ class MCTSNode:
         if not self.untried_actions:
             raise ValueError("Cannot expand node with no untried actions")
 
-        action = self.untried_actions.pop()
+        action_index = random.randrange(len(self.untried_actions))
+        action = self.untried_actions.pop(action_index)
         new_state = self.state.apply_action(action)
         child_node = MCTSNode(new_state, parent=self, action_from_parent=action)
         self.children.append(child_node)
@@ -107,6 +111,7 @@ class CircuitStatistics:
         self.spice_success_count: int = 0
         self.spice_fail_count: int = 0
         self.max_reward_seen: float = 0.0
+        self.max_heuristic_reward: float = 0.0
 
     def record_spice_success(self, reward: float):
         """Records a successful SPICE simulation and updates max reward."""
@@ -118,6 +123,11 @@ class CircuitStatistics:
         """Records a failed SPICE simulation."""
         self.spice_fail_count += 1
 
+    def record_heuristic_reward(self, reward: float):
+        """Tracks the highest heuristic-only reward observed."""
+        if reward > self.max_heuristic_reward:
+            self.max_heuristic_reward = reward
+
     def print_progress(self, iteration: int, total_iterations: int):
         """
         Prints search progress to console.
@@ -128,7 +138,8 @@ class CircuitStatistics:
         """
         print(f"Running iteration {iteration}/{total_iterations}... "
               f"(SPICE: {self.spice_success_count} success, {self.spice_fail_count} fail, "
-              f"max reward: {self.max_reward_seen:.2f})")
+              f"max SPICE reward: {self.max_reward_seen:.2f}, "
+              f"max heuristic: {self.max_heuristic_reward:.2f})")
 
 
 class MCTS:
@@ -152,12 +163,12 @@ class MCTS:
         self.stats = CircuitStatistics()
 
         for i in range(iterations):
-            # Print progress every 1000 iterations
-            if (i % 1000 == 0):
-                self.stats.print_progress(i, iterations)
-
             # Execute one MCTS iteration
             self._execute_iteration(self.stats)
+
+            # Print progress every 1000 iterations (after updates so stats are current)
+            if (i % 1000 == 0):
+                self.stats.print_progress(i + 1, iterations)
 
         print("Search complete.")
 
@@ -225,7 +236,10 @@ class MCTS:
         else:
             # Incomplete circuit: use heuristic only (always positive)
             # Cap lower than completed baseline so MCTS still prefers completion
-            return max(0.0, min(heuristic_reward, INCOMPLETE_REWARD_CAP))
+            heuristic_only = max(0.0, min(heuristic_reward, INCOMPLETE_REWARD_CAP))
+            if stats:
+                stats.record_heuristic_reward(heuristic_only)
+            return heuristic_only
 
     def _calculate_circuit_metrics(self, state: Breadboard) -> dict:
         """
