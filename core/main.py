@@ -30,9 +30,15 @@ def main():
     # Display header
     _print_header(args)
 
-    # Initialize and run MCTS
+    # Initialize MCTS
     mcts = _initialize_mcts(initial_board)
-    _run_mcts_search(mcts, args.iterations)
+
+    # Run until valid circuit is found (if --until-valid flag is set)
+    if args.until_valid:
+        total_iterations = _run_until_valid_circuit(mcts, args.checkpoint_interval)
+    else:
+        _run_mcts_search(mcts, args.iterations)
+        total_iterations = args.iterations
 
     # Get and display results
     path, reward = mcts.get_best_solution()
@@ -43,7 +49,7 @@ def main():
     _save_final_circuit(final_board)
 
     # Save best candidate circuit
-    _save_best_candidate(mcts, args.iterations)
+    _save_best_candidate(mcts, total_iterations)
 
     # Display completion message
     _print_completion()
@@ -65,6 +71,10 @@ def _parse_arguments() -> argparse.Namespace:
                         help='Number of rows available on the breadboard (default: 15)')
     parser.add_argument('--verbose', action='store_true',
                         help='Print verbose output')
+    parser.add_argument('--until-valid', action='store_true',
+                        help='Run continuously until a valid circuit is found')
+    parser.add_argument('--checkpoint-interval', type=int, default=20000,
+                        help='Report progress every N iterations when using --until-valid (default: 20000)')
     return parser.parse_args()
 
 
@@ -78,7 +88,13 @@ def _print_header(args: argparse.Namespace):
     print("="*70)
     print("MCTS CIRCUIT TOPOLOGY GENERATOR")
     print("="*70)
-    print(f"Iterations: {args.iterations}")
+
+    if args.until_valid:
+        print(f"Mode: Run until valid circuit found")
+        print(f"Checkpoint interval: {args.checkpoint_interval:,} iterations")
+    else:
+        print(f"Iterations: {args.iterations:,}")
+
     print(f"Exploration constant: {args.exploration}")
     print(f"Breadboard rows: {args.board_rows}")
     print("="*70)
@@ -107,6 +123,79 @@ def _run_mcts_search(mcts: MCTS, iterations: int):
     """
     print("\nStarting MCTS search...")
     mcts.search(iterations=iterations)
+
+
+def _run_until_valid_circuit(mcts: MCTS, checkpoint_interval: int) -> int:
+    """
+    Runs MCTS continuously until a valid circuit is found.
+
+    Reports progress every checkpoint_interval iterations.
+    Does not reset the MCTS tree between checkpoints - continues building on previous exploration.
+
+    Args:
+        mcts: MCTS instance
+        checkpoint_interval: Number of iterations between progress reports
+
+    Returns:
+        Total number of iterations run
+    """
+    print("\nStarting MCTS search (running until valid circuit found)...")
+    print(f"Progress checkpoints every {checkpoint_interval:,} iterations\n")
+
+    total_iterations = 0
+    checkpoint_count = 0
+
+    while True:
+        checkpoint_count += 1
+
+        # Run another batch of iterations (continues from existing tree state)
+        print(f"{'='*70}")
+        print(f"CHECKPOINT {checkpoint_count}: Running iterations {total_iterations:,} to {total_iterations + checkpoint_interval:,}")
+        print(f"{'='*70}")
+
+        mcts.search(iterations=checkpoint_interval)
+        total_iterations += checkpoint_interval
+
+        # Check if we found a valid circuit
+        if mcts.best_candidate_state and mcts.best_candidate_state.is_complete_and_valid():
+            print(f"\n{'='*70}")
+            print(f"✓ VALID CIRCUIT FOUND!")
+            print(f"{'='*70}")
+            print(f"Total iterations: {total_iterations:,}")
+            print(f"Best candidate reward: {mcts.best_candidate_reward:.2f}")
+
+            # Get SPICE stats
+            spice_success = mcts.stats.spice_success_count if mcts.stats else 0
+            spice_fail = mcts.stats.spice_fail_count if mcts.stats else 0
+            total_spice = spice_success + spice_fail
+
+            if total_spice > 0:
+                success_rate = (spice_success / total_spice) * 100
+                print(f"SPICE success rate: {success_rate:.2f}% ({spice_success}/{total_spice})")
+
+            break
+        else:
+            # Report progress
+            print(f"\nCheckpoint {checkpoint_count} complete:")
+            print(f"  Total iterations so far: {total_iterations:,}")
+            print(f"  Best candidate reward: {mcts.best_candidate_reward:.2f}")
+            print(f"  Best candidate valid: {mcts.best_candidate_state.is_complete_and_valid() if mcts.best_candidate_state else False}")
+
+            # Get SPICE stats
+            spice_success = mcts.stats.spice_success_count if mcts.stats else 0
+            spice_fail = mcts.stats.spice_fail_count if mcts.stats else 0
+            total_spice = spice_success + spice_fail
+
+            if total_spice > 0:
+                success_rate = (spice_success / total_spice) * 100
+                print(f"  SPICE success rate: {success_rate:.2f}% ({spice_success}/{total_spice})")
+            else:
+                print(f"  SPICE runs: 0 (no complete circuits attempted yet)")
+
+            print(f"\nContinuing search...")
+            print()
+
+    return total_iterations
 
 
 def _display_search_results(path: list, reward: float):

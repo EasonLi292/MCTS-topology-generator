@@ -551,14 +551,20 @@ class Breadboard:
         # Get all positions (potential wire targets)
         target_points = {(r, c) for c in range(wire_col_limit + 1) for r in range(self.ROWS)}
 
+        # Track seen wire pairs to avoid duplicates (order-independent)
+        seen_wires = set()
+
         # Try all possible wire connections
         for r1, c1 in source_points:
             for r2, c2 in target_points:
-                # Skip if positions are in wrong order (avoid duplicates)
-                if (r1, c1) >= (r2, c2):
+                # Create order-independent key to avoid duplicate wires
+                wire_key = tuple(sorted(((r1, c1), (r2, c2))))
+
+                if wire_key in seen_wires:
                     continue
 
                 if self.can_place_wire(r1, c1, r2, c2):
+                    seen_wires.add(wire_key)
                     actions.append(("wire", r1, c1, r2, c2))
 
     def _add_stop_action_if_valid(self, actions: List[Tuple]):
