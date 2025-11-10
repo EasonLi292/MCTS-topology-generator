@@ -171,7 +171,4 @@ A circuit is complete when:
 ## License
 
 MIT License
-
-## Contributing
-
-Issues and pull requests welcome!
+Readme and code refactoring done by Claude
