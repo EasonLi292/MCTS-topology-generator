@@ -72,7 +72,7 @@ python3 main.py --iterations 20000 --exploration 1.5 --board-rows 20 --verbose
 - `--exploration C`: UCT exploration constant (default: 1.0)
   - Lower values (0.5-1.0): More exploitation of known good circuits
   - Higher values (1.5-2.5): More exploration of new circuit topologies
-- `--board-rows R`: Total number of rows in the breadboard (default CLI run: 15; larger values re-enable the full 30-row workspace)
+- `--board-rows R`: Total number of rows in the breadboard (default CLI run: 15)
 - `--verbose`: Print detailed action sequence
 
 ### Output
