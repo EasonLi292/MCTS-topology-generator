@@ -23,7 +23,7 @@ import os
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.topology_game_board import Breadboard, Component
+from core.topology_game_board import Breadboard, Component, RowPinIndex
 
 
 def get_min_max_rows(board: Breadboard) -> Tuple[int, int]:
@@ -76,14 +76,14 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
     # Create a fresh board without pre-placed VIN/VOUT
     new_board = Breadboard.__new__(Breadboard)
     new_board.ROWS = board.ROWS
-    new_board.COLUMNS = board.COLUMNS
+    new_board.COLUMNS = 1
     new_board.VSS_ROW = board.VSS_ROW
     new_board.VDD_ROW = board.VDD_ROW
     new_board.VIN_ROW = board.VIN_ROW
     new_board.VOUT_ROW = board.VOUT_ROW
     new_board.WORK_START_ROW = board.WORK_START_ROW
     new_board.WORK_END_ROW = board.WORK_END_ROW
-    new_board.grid = [[None for _ in range(board.COLUMNS)] for _ in range(board.ROWS)]
+    new_board.row_pin_index = RowPinIndex(board.ROWS)
     new_board.placed_components = []
     new_board.component_counter = 0
     new_board.vin_placed = False
@@ -96,7 +96,7 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
     # Process VIN/VOUT first to ensure they're placed before wires
     for comp in board.placed_components:
         if comp.type in ['vin', 'vout']:
-            new_board._place_component(comp.type, comp.pins[0][0], comp.pins[0][1])
+            new_board._place_component(comp.type, comp.pins[0][0])
             if comp.type == 'vin':
                 new_board.vin_placed = True
             elif comp.type == 'vout':
@@ -105,37 +105,27 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
     # Then process non-wire components
     for comp in board.placed_components:
         if comp.type not in ['vin', 'vout', 'wire']:
-            # Translate the component
-            new_pins = [(r + row_offset, c) for r, c in comp.pins]
+            new_pins = [(r + row_offset, 0) for r, _ in comp.pins]
 
-            # Check if translation is valid (within bounds)
-            for r, c in new_pins:
-                if not (0 <= r < board.ROWS and 0 <= c < board.COLUMNS):
-                    return None  # Translation out of bounds
+            if any(not (0 <= r < board.ROWS) for r, _ in new_pins):
+                return None  # Translation out of bounds
 
-            new_board._place_component(comp.type, new_pins[0][0], new_pins[0][1])
+            new_board._place_component(comp.type, new_pins[0][0])
 
     # Finally process wires
     for comp in board.placed_components:
         if comp.type == 'wire':
-            # For wires, translate each endpoint independently
-            # but keep VIN_ROW, VOUT_ROW, VSS_ROW, and VDD_ROW fixed
             new_pins = []
-            for r, c in comp.pins:
+            for r, _ in comp.pins:
                 if r in [board.VIN_ROW, board.VOUT_ROW, board.VSS_ROW, board.VDD_ROW]:
-                    # Keep fixed connection points unchanged
-                    new_pins.append((r, c))
+                    new_pins.append((r, 0))
                 else:
-                    # Translate other wire endpoints
-                    new_pins.append((r + row_offset, c))
+                    new_pins.append((r + row_offset, 0))
 
-            # Check if translation is valid (within bounds)
-            for r, c in new_pins:
-                if not (0 <= r < board.ROWS and 0 <= c < board.COLUMNS):
-                    return None  # Translation out of bounds
+            if any(not (0 <= r < board.ROWS) for r, _ in new_pins):
+                return None  # Translation out of bounds
 
-            new_board._place_wire(new_pins[0][0], new_pins[0][1],
-                                  new_pins[1][0], new_pins[1][1])
+            new_board._place_wire(new_pins[0][0], new_pins[1][0])
 
     return new_board
 

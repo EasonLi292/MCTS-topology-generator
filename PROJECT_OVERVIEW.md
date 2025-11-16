@@ -2,9 +2,13 @@
 
 This repository implements an end-to-end pipeline that **discovers analog circuit
 topologies** with Monte Carlo Tree Search (MCTS) and validates them with
-`ngspice`. The code is organized so each stage of the pipeline (state
-representation, search, simulation, reward shaping, and verification) is both
-testable and swappable—handy context when explaining the system to reviewers.
+`ngspice`. The system uses a **row-only connectivity model** where each breadboard
+row functions as a single electrical net, simplifying the state space while
+maintaining full circuit functionality.
+
+The code is organized so each stage of the pipeline (state representation, search,
+simulation, reward shaping, and verification) is both testable and swappable—handy
+context when explaining the system to reviewers.
 
 ---
 
@@ -26,15 +30,19 @@ testable and swappable—handy context when explaining the system to reviewers.
 
 ### Breadboard Environment — `core/topology_game_board.py`
 
+**Row-Only Model**: Each row is a single electrical net. Components span multiple rows,
+and wires connect rows together. No column-based placement—all connectivity is row-based.
+
 | Function / Method | Purpose |
 | --- | --- |
-| `Breadboard.__init__(rows)` | Creates the virtual board with fixed VIN/VOUT rows and initializes union-find nets. |
-| `can_place_component(component, row, col)` | Enforces work-area, activation, and uniqueness rules before a part is placed. |
-| `can_place_wire(r1, c1, r2, c2)` | Validates wiring rules (no duplicate wires, VIN/VOUT safety, control-pin to rail blocks). |
-| `apply_action(action)` | Returns an immutable clone after placing a component or wire. |
-| `is_complete_and_valid()` | Confirms VIN/VOUT presence, connectivity, and gate/base safety. |
-| `get_connectivity_summary()` | Builds the net graph that powers both validation and heuristic signals. |
-| `to_netlist()` | Emits a SPICE-ready description (models, supplies, components, probes, AC sweep). |
+| `Breadboard.__init__(rows)` | Creates the virtual board with fixed VIN/VOUT rows and initializes row-based union-find nets. |
+| `RowPinIndex` | Tracks which component pins occupy each row (multiple pins can share a row). |
+| `can_place_component(comp_type, row)` | Enforces work-area, activation, and uniqueness rules before placement. |
+| `can_place_wire(r1, r2)` | Validates wiring rules (no same-row, no duplicate, forbidden pairs, gate/base protection). |
+| `apply_action(action)` | Returns an immutable clone after placing a component (`comp_type, row`) or wire (`"wire", r1, r2`). |
+| `is_complete_and_valid()` | Confirms VIN/VOUT presence, component connectivity via graph BFS, and gate/base safety. |
+| `_compute_connectivity_summary()` | Builds adjacency graph from components (edges between nets) and validates via BFS. |
+| `to_netlist()` | Emits a SPICE-ready description with nets named by union-find roots. |
 
 ### Monte Carlo Tree Search — `core/MCTS.py`
 
@@ -77,13 +85,37 @@ testable and swappable—handy context when explaining the system to reviewers.
 
 ## 4. Spotlighted Technical Choices
 
-- **Union-Find Nets:** Breadboard rows share disjoint-set representatives so
-  wire placement instantly merges nets while keeping VIN/VOUT rails isolated.
+- **Row-Only Connectivity Model:** Each breadboard row is a single electrical net
+  (like a real breadboard). Components span rows but don't auto-unify them; instead,
+  they create edges in an adjacency graph for validation. Wires explicitly merge rows
+  via union-find. See `docs/ROW_ONLY_MODEL.md` for detailed architecture.
+
+- **Two-Layer Connectivity System:**
+  1. **Union-Find (Physical Wiring)**: Tracks which rows are wired together - used
+     for net naming and active net queries (O(α(n)) efficiency)
+  2. **Component Graph (Logical Connectivity)**: Components create edges between nets
+     they span - used for BFS validation and degenerate component detection
+
 - **Progressive Rewards:** Heuristic bonuses unlock in stages (touching VDD,
   touching VSS, VIN→VOUT path, all components reachable), which stabilizes MCTS
   before the first successful SPICE simulation.
-- **Immutable State Transitions:** `apply_action()` clones the board, which
-  keeps tree nodes independent and makes it easy to parallelize future rollouts.
+
+- **Degenerate Component Detection:** Components must span at least 2 different nets
+  (checked BEFORE union-find merging), preventing placement of electrically useless
+  components that would waste action space.
+
+- **Immutable State Transitions:** `apply_action()` clones the board (including
+  `RowPinIndex`), keeping tree nodes independent for potential parallel rollouts.
+
+---
+
+## 5. Key Documentation
+
+- **`docs/ROW_ONLY_MODEL.md`** - Deep dive into the row-only connectivity architecture,
+  union-find vs component graph, net naming, and validation
+- **`docs/VALIDATION_RULES_SUMMARY.md`** - Complete circuit validation rules and examples
+- **`tests/test_multipin_connectivity.py`** - Tests proving components span nets without
+  auto-union, and connectivity works via graph traversal
 
 This document gives a concise but technically grounded view that pairs well
 with the README when presenting the project to faculty or reviewers.

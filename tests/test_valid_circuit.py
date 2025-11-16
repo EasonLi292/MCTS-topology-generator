@@ -52,7 +52,7 @@ def test_simple_resistor_divider():
 
     # Step 2: Wire from VIN to work row 5
     print("\n2. Wiring VIN (1,0) → (5,1)...")
-    board = board.apply_action(('wire', 1, 0, 5, 1))
+    board = board.apply_action(('wire', 1, 5))
     if board is None:
         print("   ❌ FAILED: Wire action returned None")
         return False
@@ -60,7 +60,7 @@ def test_simple_resistor_divider():
 
     # Step 3: Place R1 on rows 5-6
     print("\n3. Placing R1 at (5,1)...")
-    board = board.apply_action(('resistor', 5, 1))
+    board = board.apply_action(('resistor', 5))
     if board is None:
         print("   ❌ FAILED: R1 placement returned None")
         return False
@@ -68,7 +68,7 @@ def test_simple_resistor_divider():
 
     # Step 4: Place R2 on rows 6-7 (column 2)
     print("\n4. Placing R2 at (6,2)...")
-    board = board.apply_action(('resistor', 6, 2))
+    board = board.apply_action(('resistor', 6))
     if board is None:
         print("   ❌ FAILED: R2 placement returned None")
         return False
@@ -76,7 +76,7 @@ def test_simple_resistor_divider():
 
     # Step 5: Wire from R2 to VDD
     print("\n5. Wiring (7,2) → VDD (14,2)...")
-    board = board.apply_action(('wire', 7, 2, 14, 2))
+    board = board.apply_action(('wire', 7, 14))
     if board is None:
         print("   ❌ FAILED: Wire to VDD returned None")
         return False
@@ -84,7 +84,7 @@ def test_simple_resistor_divider():
 
     # Step 6: Place R3 to connect VSS
     print("\n6. Placing R3 at (8,1) to connect to VSS...")
-    board = board.apply_action(('resistor', 8, 1))
+    board = board.apply_action(('resistor', 8))
     if board is None:
         print("   ❌ FAILED: R3 placement returned None")
         return False
@@ -92,7 +92,7 @@ def test_simple_resistor_divider():
 
     # Step 7: Wire R3 to VSS
     print("\n7. Wiring VSS (0,0) → R3 (8,1)...")
-    board = board.apply_action(('wire', 0, 0, 8, 1))
+    board = board.apply_action(('wire', 0, 8))
     if board is None:
         print("   ❌ FAILED: VSS wire returned None")
         return False
@@ -100,7 +100,7 @@ def test_simple_resistor_divider():
 
     # Step 8: Wire to connect R1 and R2 midpoints
     print("\n8. Wiring midpoints (6,1) → (6,2)...")
-    board = board.apply_action(('wire', 6, 1, 6, 2))
+    board = board.apply_action(('wire', 6, 6))
     if board is None:
         print("   ❌ FAILED: Wire between midpoints returned None")
         return False
@@ -108,7 +108,7 @@ def test_simple_resistor_divider():
 
     # Step 9: Wire R3 to midpoint (connect to R1-R2 junction)
     print("\n9. Wiring R3 (9,1) → midpoint (6,2)...")
-    board = board.apply_action(('wire', 9, 1, 6, 2))
+    board = board.apply_action(('wire', 9, 6))
     if board is None:
         print("   ❌ FAILED: Wire from R3 to midpoint returned None")
         return False
@@ -116,7 +116,7 @@ def test_simple_resistor_divider():
 
     # Step 10: Wire VOUT to midpoint between R1 and R2
     print("\n10. Wiring VOUT (13,0) → midpoint (6,1)...")
-    board = board.apply_action(('wire', 13, 0, 6, 1))
+    board = board.apply_action(('wire', 13, 6))
     if board is None:
         print("   ❌ FAILED: VOUT wire returned None")
         return False
@@ -135,13 +135,13 @@ def test_simple_resistor_divider():
 
     print("\nConnectivity Summary:")
     print(f"  valid: {summary.get('valid', False)}")
-    print(f"  touches_vdd: {summary.get('touches_vdd', False)}")
+    print(f"  touches_vdd: {summary.get('touches_vdd')}")
     print(f"  touches_vss: {summary.get('touches_vss', False)}")
-    print(f"  vin_vout_connected: {summary.get('vin_vout_connected', False)}")
+    print(f"  vin_vout_connected: {summary.get('vin_vout_connected')}")
     print(f"  all_components_connected: {summary.get('all_components_connected', False)}")
-    print(f"  vin_on_power_rail: {summary.get('vin_on_power_rail', False)}")
+    print(f"  vin_on_power_rail: {summary.get('vin_on_power_rail')}")
     print(f"  vout_on_power_rail: {summary.get('vout_on_power_rail', False)}")
-    print(f"  vin_vout_distinct: {summary.get('vin_vout_distinct', False)}")
+    print(f"  vin_vout_distinct: {summary.get('vin_vout_distinct')}")
 
     # Debug: Print actual net mapping
     print("\n" + "="*70)
@@ -181,25 +181,7 @@ def test_simple_resistor_divider():
     print("DIAGNOSIS")
     print("="*70)
 
-    if summary.get('vin_on_power_rail', False):
-        print("❌ ISSUE DETECTED: vin_on_power_rail is True")
-        print("   This means VIN net == VDD net or VIN net == VSS net")
-        print("   Root cause: Position-based nets auto-merge resistor pins,")
-        print("   causing VIN → (5,1) → (6,1) → VDD to collapse into one net")
-
-    if summary.get('vout_on_power_rail', False):
-        print("❌ ISSUE DETECTED: vout_on_power_rail is True")
-        print("   This means VOUT net == VDD net or VOUT net == VSS net")
-
-    if not summary.get('valid', False):
-        print("\n❌ CIRCUIT IS INVALID (but should be valid)")
-        print("   Expected behavior: VIN and VDD should be on DIFFERENT nets")
-        print("   with the resistor acting as the component between them.")
-        return False
-    else:
-        print("\n✓ CIRCUIT IS VALID")
-        print("   The position-based net mapping correctly keeps VIN and VDD separate!")
-        return True
+    return summary.get('valid', False)
 
 
 def test_wire_ordering_constraint():
@@ -221,8 +203,8 @@ def test_wire_ordering_constraint():
     actions = board.legal_actions()
     wire_actions = [a for a in actions if a[0] == 'wire']
 
-    target_wire = ('wire', 14, 1, 5, 1)
-    reverse_wire = ('wire', 5, 1, 14, 1)
+    target_wire = ('wire', 14, 5)
+    reverse_wire = ('wire', 5, 14)
 
     if target_wire in wire_actions:
         print(f"✓ Action {target_wire} is available")

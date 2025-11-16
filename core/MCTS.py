@@ -9,7 +9,8 @@ from spice_simulator import run_ac_simulation, calculate_reward_from_simulation
 
 # Reward tuning constants
 INCOMPLETE_REWARD_CAP = 40.0
-COMPLETION_BASELINE_REWARD = 45.0
+# Completed circuits should always dominate heuristic-only scores; align with SPICE baseline
+COMPLETION_BASELINE_REWARD = 100.0
 
 # Deterministic expansion order for reproducibility
 random.seed(1)
@@ -344,7 +345,7 @@ class MCTS:
         # Heavy penalties for invalid power-rail placements or degenerate structures
         if metrics.get('vin_on_power_rail') or metrics.get('vout_on_power_rail'):
             return -25.0
-        if not metrics.get('vin_vout_distinct', True):
+        if not metrics.get('vin_vout_distinct'):
             return -20.0
         if metrics.get('degenerate_component'):
             return -15.0
@@ -362,7 +363,7 @@ class MCTS:
             heuristic_reward += 8.0  # Reward touching VSS
         if conn.get('reachable_vout', False):
             heuristic_reward += 15.0  # Big reward for VIN->VOUT path
-        if conn.get('all_components_reachable', False):
+        if conn.get('all_components_reachable'):
             heuristic_reward += 10.0  # Reward having all components connected
 
         return heuristic_reward

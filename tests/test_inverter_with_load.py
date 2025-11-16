@@ -61,8 +61,8 @@ def build_cmos_inverter_with_load():
     pmos_gate = pmos_start + 1
     pmos_source = pmos_start + 2
     print(f"\n[Step 1] Placing PMOS at rows {pmos_start}-{pmos_gate}-{pmos_source}...")
-    b = b.apply_action(('wire', b.VDD_ROW, 0, pmos_source, 1))  # Activate PMOS source from VDD
-    b = b.apply_action(('pmos3', pmos_start, 1))
+    b = b.apply_action(('wire', b.VDD_ROW, pmos_source))  # Activate PMOS source from VDD
+    b = b.apply_action(('pmos3', pmos_start))
     print(f"  PMOS placed: drain=row {pmos_start}, gate=row {pmos_gate}, source=row {pmos_source}")
 
     # Step 2: Place NMOS transistor (drain=15, gate=16, source=17)
@@ -70,29 +70,29 @@ def build_cmos_inverter_with_load():
     nmos_gate = nmos_start + 1
     nmos_source = nmos_start + 2
     print(f"\n[Step 2] Placing NMOS at rows {nmos_start}-{nmos_gate}-{nmos_source}...")
-    b = b.apply_action(('wire', b.VSS_ROW, 0, nmos_source, 1))  # Activate NMOS source from VSS
-    b = b.apply_action(('nmos3', nmos_start, 1))
+    b = b.apply_action(('wire', b.VSS_ROW, nmos_source))  # Activate NMOS source from VSS
+    b = b.apply_action(('nmos3', nmos_start))
     print(f"  NMOS placed: drain=row {nmos_start}, gate=row {nmos_gate}, source=row {nmos_source}")
 
     # Step 3: Connect both drains together (output node)
     print(f"\n[Step 3] Connecting PMOS drain (row {pmos_start}) to NMOS drain (row {nmos_start})...")
-    b = b.apply_action(('wire', pmos_start, 1, nmos_start, 1))
+    b = b.apply_action(('wire', pmos_start, nmos_start))
 
     # Step 4: Connect both gates to VIN
     print("\n[Step 4] Connecting gates to VIN...")
-    b = b.apply_action(('wire', b.VIN_ROW, 0, pmos_gate, 1))  # PMOS gate to VIN
-    b = b.apply_action(('wire', b.VIN_ROW, 0, nmos_gate, 1))  # NMOS gate to VIN
+    b = b.apply_action(('wire', b.VIN_ROW, pmos_gate))  # PMOS gate to VIN
+    b = b.apply_action(('wire', b.VIN_ROW, nmos_gate))  # NMOS gate to VIN
 
     # Step 5: Add load resistor on output (rows 20-21)
     resistor_start = choose_row(b, 10, height=2)
     print(f"\n[Step 5] Adding load resistor at rows {resistor_start}-{resistor_start + 1}...")
-    b = b.apply_action(('resistor', resistor_start, 1))
-    b = b.apply_action(('wire', pmos_start, 1, resistor_start, 1))  # Connect output node to resistor
-    b = b.apply_action(('wire', resistor_start + 1, 1, b.VSS_ROW, 0))  # Resistor to ground
+    b = b.apply_action(('resistor', resistor_start))
+    b = b.apply_action(('wire', pmos_start, resistor_start))  # Connect output node to resistor
+    b = b.apply_action(('wire', resistor_start + 1, b.VSS_ROW))  # Resistor to ground
 
     # Step 6: Connect output node to VOUT
     print("\n[Step 6] Connecting output node to VOUT...")
-    b = b.apply_action(('wire', pmos_start, 1, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', pmos_start, b.VOUT_ROW))
 
     print("\n✅ CMOS Inverter with load resistor built successfully!")
     return b

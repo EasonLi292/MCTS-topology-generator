@@ -24,7 +24,9 @@ NGSPICE_BINARY = os.environ.get('NGSPICE_BINARY') or shutil.which('ngspice') or 
 # Reward calculation constants
 BASELINE_REWARD = 100.0
 MINIMUM_REWARD = 100.0
-TRIVIAL_CIRCUIT_REWARD = 10.0
+# Even trivial circuits that simulate should still return the baseline so
+# completed circuits always beat heuristic-only scores.
+TRIVIAL_CIRCUIT_REWARD = BASELINE_REWARD
 
 # Reward multipliers for different metrics
 SPREAD_MULTIPLIER = 500.0      # Frequency-dependent behavior (most important)

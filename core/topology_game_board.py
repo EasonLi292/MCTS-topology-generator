@@ -91,23 +91,81 @@ class Component:
     pins: List[Tuple[int, int]]
     id: int = 0
 
+
+@dataclass
+class PinRecord:
+    component: Component
+    pin_index: int
+    col: int = 0  # retained for compatibility; always 0 in node model
+
+
+class RowPinIndex:
+    """
+    Tracks which pins exist on each row, abstracting away the 2D grid.
+
+    Connectivity is row-based, but we keep column metadata for placement
+    rules and for debugging/serialization.
+    """
+
+    def __init__(self, rows: int):
+        self._rows: List[List[PinRecord]] = [[] for _ in range(rows)]
+
+    def clone(self) -> "RowPinIndex":
+        new_index = RowPinIndex(len(self._rows))
+        new_index._rows = copy.deepcopy(self._rows)
+        return new_index
+
+    def is_empty(self, row: int, col: int = 0) -> bool:
+        return 0 <= row < len(self._rows) and len(self._rows[row]) == 0
+
+    def place_pin(self, row: int, col: int, component: Component, pin_index: int):
+        self._rows[row].append(PinRecord(component, pin_index, col))
+
+    def get_pin(self, row: int, col: int = 0) -> Optional[PinRecord]:
+        if 0 <= row < len(self._rows) and self._rows[row]:
+            # Return the first pin (all share the row net)
+            return self._rows[row][0]
+        return None
+
+    def pins_in_row(self, row: int) -> List[PinRecord]:
+        if 0 <= row < len(self._rows):
+            return list(self._rows[row])
+        return []
+
+    def rows_view(self) -> Dict[int, List[Dict[str, object]]]:
+        """
+        Returns a lightweight mapping of rows to pin summaries.
+
+        Used for debugging/introspection without exposing mutable structures.
+        """
+        view: Dict[int, List[Dict[str, object]]] = {}
+        for row_idx, pins in enumerate(self._rows):
+            if not pins:
+                continue
+            view[row_idx] = [
+                {
+                    "col": pin.col,
+                    "component": pin.component.type,
+                    "component_id": pin.component.id,
+                    "pin_index": pin.pin_index,
+                }
+                for pin in pins
+            ]
+        return view
+
 # ============================================================
 # Breadboard Class
 # ============================================================
 class Breadboard:
     DEFAULT_ROWS = 15
-    DEFAULT_COLUMNS = 8
     MIN_ROWS = 6  # Need VIN, VOUT, power rails, and at least one work row
 
-    def __init__(self, rows: int = DEFAULT_ROWS, columns: int = DEFAULT_COLUMNS):
+    def __init__(self, rows: int = DEFAULT_ROWS):
         if rows < self.MIN_ROWS:
             raise ValueError(f"Breadboard requires at least {self.MIN_ROWS} rows (got {rows})")
-        if columns < 2:
-            raise ValueError(f"Breadboard requires at least 2 columns (got {columns})")
 
-        # Board dimensions (stored per-instance so tests/CLI can customize them)
         self.ROWS = rows
-        self.COLUMNS = columns
+        self.COLUMNS = 1  # retained for legacy callers; no column semantics
         self.VSS_ROW = 0
         self.VDD_ROW = rows - 1
         self.VIN_ROW = 1
@@ -118,9 +176,8 @@ class Breadboard:
         if self.WORK_END_ROW < self.WORK_START_ROW:
             raise ValueError("Breadboard needs at least one work row between VIN/VOUT and power rails")
 
-        self.grid: List[List[Optional[Tuple['Component', int]]]] = [
-            [None for _ in range(self.COLUMNS)] for _ in range(self.ROWS)
-        ]
+        # Row-centric pin index (no columns in node model)
+        self.row_pin_index = RowPinIndex(self.ROWS)
         self.placed_components: List[Component] = []
         self.component_counter = 0
         self.vin_placed = False
@@ -138,10 +195,10 @@ class Breadboard:
             self.find(self.VIN_ROW),
             self.find(self.VOUT_ROW)
         }
-        self.placed_wires: Set[Tuple[Tuple[int, int], Tuple[int, int]]] = set()
+        self.placed_wires: Set[Tuple[int, int]] = set()
         # Place VIN and VOUT on dedicated reserved rows
-        self._place_component('vin', self.VIN_ROW, 0)
-        self._place_component('vout', self.VOUT_ROW, 0)
+        self._place_component('vin', self.VIN_ROW)
+        self._place_component('vout', self.VOUT_ROW)
 
     def find(self, row: int) -> int:
         """Find the root net ID for a given row (union-find with path compression).
@@ -170,28 +227,43 @@ class Breadboard:
         root1 = self.find(row1)
         root2 = self.find(row2)
         if root1 != root2:
-            # Merge roots and maintain active_nets consistency
-            if root1 in self.active_nets and root2 in self.active_nets:
-                # Both active: merge root2 into root1, remove stale root2
+            # Keep power rails as canonical roots when involved
+            if root1 in {self.VDD_ROW, self.VSS_ROW}:
+                self.uf_parent[root2] = root1
+            elif root2 in {self.VDD_ROW, self.VSS_ROW}:
+                self.uf_parent[root1] = root2
+            elif root1 in self.active_nets and root2 in self.active_nets:
                 self.uf_parent[root2] = root1
                 self.active_nets.discard(root2)
             elif root1 in self.active_nets:
-                # Only root1 active: make root1 the parent
                 self.uf_parent[root2] = root1
             elif root2 in self.active_nets:
-                # Only root2 active: make root2 the parent
                 self.uf_parent[root1] = root2
             else:
-                # Neither active: arbitrary choice
                 self.uf_parent[root2] = root1
 
-    def is_empty(self, row: int, col: int) -> bool:
-        return 0 <= row < self.ROWS and 0 <= col < self.COLUMNS and self.grid[row][col] is None
+    def is_empty(self, row: int, col: int = 0) -> bool:
+        return self.row_pin_index.is_empty(row, col)
 
     def is_row_active(self, row: int) -> bool:
         return self.find(row) in self.active_nets
 
-    def can_place_component(self, comp_type: str, start_row: int, col: int) -> bool:
+    def get_pin_at(self, row: int, col: int = 0) -> Optional["PinRecord"]:
+        """Returns the pin record at a specific row/col, if any."""
+        return self.row_pin_index.get_pin(row, col)
+
+    def pins_in_row(self, row: int) -> List[PinRecord]:
+        """Returns all pins that occupy a given row (any column)."""
+        return self.row_pin_index.pins_in_row(row)
+
+    def row_pin_summary(self) -> Dict[int, List[Dict[str, object]]]:
+        """
+        Lightweight view of pins per row.
+        Helpful for debugging or for row-centric reasoning without columns.
+        """
+        return self.row_pin_index.rows_view()
+
+    def can_place_component(self, comp_type: str, start_row: int) -> bool:
         info = COMPONENT_CATALOG.get(comp_type)
         if not info or comp_type == 'wire': return False
         if not info.can_place_multiple and getattr(self, f"{comp_type}_placed", False):
@@ -208,8 +280,7 @@ class Breadboard:
         if not (min_allowed_row <= pin_rows.start and pin_rows.stop - 1 <= max_allowed_row):
             return False
 
-        if not all(self.is_empty(r, col) for r in pin_rows):
-            return False
+        # Node model allows multiple pins per row; we only check bounds
         if info.pin_count == 1:
             return not self.is_row_active(start_row)
 
@@ -219,7 +290,7 @@ class Breadboard:
 
         return pins_touch_active
 
-    def can_place_wire(self, r1: int, c1: int, r2: int, c2: int) -> bool:
+    def can_place_wire(self, r1: int, r2: int) -> bool:
         """
         Checks if a wire can be legally placed between two positions.
 
@@ -240,13 +311,11 @@ class Breadboard:
         # The union-find structure (uf_parent) maintains one entry per row, not per cell.
 
         # Forbidden row pairs - only forbid DIRECT wires between special I/O/power rows
-        # Don't use union-find nets here, as circuits SHOULD connect VIN to VOUT through components
-        # We only want to prevent direct shorts between incompatible special rows
         forbidden_row_pairs = [
-            {self.VIN_ROW, self.VSS_ROW},    # VIN row cannot wire to VSS row
-            {self.VOUT_ROW, self.VDD_ROW},   # VOUT row cannot wire to VDD row
-            {self.VSS_ROW, self.VOUT_ROW},   # VSS row cannot wire to VOUT row
-            {self.VIN_ROW, self.VOUT_ROW},   # VIN row cannot wire to VOUT row (direct short)
+            {self.VIN_ROW, self.VSS_ROW},
+            {self.VOUT_ROW, self.VDD_ROW},
+            {self.VSS_ROW, self.VOUT_ROW},
+            {self.VIN_ROW, self.VOUT_ROW},
         ]
         endpoint_rows = {r1, r2}
         for pair in forbidden_row_pairs:
@@ -254,11 +323,11 @@ class Breadboard:
                 return False
 
         # Check if positions are within bounds
-        if not self._is_position_valid(r1, c1) or not self._is_position_valid(r2, c2):
+        if not self._is_position_valid(r1, 0) or not self._is_position_valid(r2, 0):
             return False
 
         # Check for duplicate wire
-        if self._is_duplicate_wire(r1, c1, r2, c2):
+        if self._is_duplicate_wire(r1, r2):
             return False
 
         # At least one endpoint must be on an active net
@@ -266,7 +335,7 @@ class Breadboard:
             return False
 
         # Check gate/base pin connection rules
-        if not self._validate_control_pin_wiring(r1, c1, r2, c2):
+        if not self._validate_control_pin_wiring(r1, 0, r2, 0):
             return False
 
         return True
@@ -274,37 +343,37 @@ class Breadboard:
     def _is_mos_gate_cell(self, row: int, col: int) -> bool:
         if not self._is_position_valid(row, col):
             return False
-        cell = self.grid[row][col]
-        if cell is None:
+        pin = self.row_pin_index.get_pin(row, col)
+        if pin is None:
             return False
-        component, pin_index = cell
+        component = pin.component
+        pin_index = pin.pin_index
         return component.type in ['nmos3', 'pmos3'] and pin_index == 1
 
-    def _is_position_valid(self, row: int, col: int) -> bool:
+    def _is_position_valid(self, row: int, col: int = 0) -> bool:
         """
         Checks if a position is within the breadboard bounds.
 
         Args:
             row: Row index
-            col: Column index
 
         Returns:
             True if position is valid
         """
-        return 0 <= row < self.ROWS and 0 <= col < self.COLUMNS
+        return 0 <= row < self.ROWS
 
-    def _is_duplicate_wire(self, r1: int, c1: int, r2: int, c2: int) -> bool:
+    def _is_duplicate_wire(self, r1: int, r2: int) -> bool:
         """
         Checks if a wire already exists between two positions.
 
         Args:
-            r1, c1: First endpoint position
-            r2, c2: Second endpoint position
+            r1: First endpoint row
+            r2: Second endpoint row
 
         Returns:
             True if this wire already exists
         """
-        wire_key = tuple(sorted(((r1, c1), (r2, c2))))
+        wire_key = tuple(sorted((r1, r2)))
         return wire_key in self.placed_wires
 
     def _validate_control_pin_wiring(self, r1: int, c1: int, r2: int, c2: int) -> bool:
@@ -322,44 +391,27 @@ class Breadboard:
         Returns:
             True if wiring is valid
         """
-        # Check both endpoints
-        for row, col in [(r1, c1), (r2, c2)]:
-            if not self._is_control_pin_power_rail_connection_valid(row, col, r1, c1, r2, c2):
-                return False
+        if self._row_has_gate_pin(r1) and self._is_power_rail(r2):
+            return False
+        if self._row_has_gate_pin(r2) and self._is_power_rail(r1):
+            return False
+        if self._row_has_base_pin(r1) and self._is_power_rail(r2):
+            return False
+        if self._row_has_base_pin(r2) and self._is_power_rail(r1):
+            return False
         return True
 
-    def _is_control_pin_power_rail_connection_valid(self, row: int, col: int,
-                                                     r1: int, c1: int, r2: int, c2: int) -> bool:
-        """
-        Checks if a specific position (gate or base pin) can be wired to the other endpoint.
+    def _row_has_gate_pin(self, row: int) -> bool:
+        return any(
+            pin.component.type in ['nmos3', 'pmos3'] and pin.pin_index == 1
+            for pin in self.row_pin_index.pins_in_row(row)
+        )
 
-        Args:
-            row, col: Position to check (potential gate/base pin)
-            r1, c1: First wire endpoint
-            r2, c2: Second wire endpoint
-
-        Returns:
-            True if connection is valid
-        """
-        cell = self.grid[row][col]
-        if cell is None:
-            return True  # Empty cell, no restriction
-
-        component, pin_index = cell
-
-        # Check if this is a gate pin (MOSFET pin 1)
-        if component.type in ['nmos3', 'pmos3'] and pin_index == 1:
-            other_row = r2 if row == r1 else r1
-            if self._is_power_rail(other_row):
-                return False  # Cannot wire gate to power rail
-
-        # Check if this is a base pin (BJT pin 1)
-        elif component.type in ['npn', 'pnp'] and pin_index == 1:
-            other_row = r2 if row == r1 else r1
-            if self._is_power_rail(other_row):
-                return False  # Cannot wire base to power rail
-
-        return True
+    def _row_has_base_pin(self, row: int) -> bool:
+        return any(
+            pin.component.type in ['npn', 'pnp'] and pin.pin_index == 1
+            for pin in self.row_pin_index.pins_in_row(row)
+        )
 
     def _is_power_rail(self, row: int) -> bool:
         """
@@ -450,59 +502,31 @@ class Breadboard:
             return new_board
         success = False
         if action_type == "wire":
-            _, r1, c1, r2, c2 = action
-            success = new_board._place_wire(r1, c1, r2, c2) is not None
+            _, r1, r2 = action
+            success = new_board._place_wire(r1, r2) is not None
         else:
-            comp_type, start_row, col = action
-            success = new_board._place_component(comp_type, start_row, col) is not None
+            comp_type, start_row = action
+            success = new_board._place_component(comp_type, start_row) is not None
         if not success:
             raise ValueError(f"Invalid action applied: {action}")
         return new_board
 
     def legal_actions(self) -> List[Tuple]:
         """
-        Generates all legal actions (component placements and wires) from current state.
+        Generates all legal actions (component placements and wires) from current state
+        in the node model (rows only, no columns).
 
         Returns:
             List of action tuples:
-            - Component placement: (comp_type, start_row, col)
-            - Wire placement: ("wire", r1, c1, r2, c2)
+            - Component placement: (comp_type, start_row)
+            - Wire placement: ("wire", r1, r2)
             - Stop action: ("STOP",)
         """
         actions: List[Tuple] = []
-
-        # Find the next available column for component placement
-        target_col = self._find_target_column()
-
-        if target_col == -1:
-            # No more space - only allow STOP if circuit is complete
-            self._add_stop_action_if_valid(actions)
-            return actions
-
-        # Generate component placement actions
-        self._add_component_actions(actions, target_col)
-
-        # Generate wire placement actions
-        self._add_wire_actions(actions, target_col)
-
-        # Add STOP action if circuit is complete and valid
+        self._add_component_actions(actions, target_col=0)
+        self._add_wire_actions(actions, target_col=0)
         self._add_stop_action_if_valid(actions)
-
         return actions
-
-    def _find_target_column(self) -> int:
-        """
-        Finds the next available column for component placement.
-
-        Returns:
-            Column index, or -1 if no columns are available
-        """
-        # Start from column 1 since column 0 is reserved for vin/vout
-        for c in range(1, self.COLUMNS):
-            # Check if this column has any empty space in the work area
-            if not all(not self.is_empty(r, c) for r in range(self.WORK_START_ROW, self.WORK_END_ROW + 1)):
-                return c
-        return -1
 
     def _add_component_actions(self, actions: List[Tuple], target_col: int):
         """
@@ -516,14 +540,11 @@ class Breadboard:
             if comp_type == 'wire':
                 continue  # Wires are handled separately
 
-            # Calculate the maximum starting row for this component
-            # Allow components to connect from VIN_ROW (1) to VOUT_ROW (28)
             max_start = self.VOUT_ROW - (info.pin_count - 1)
 
-            # Try all possible starting rows from VIN_ROW to max_start
             for r in range(self.VIN_ROW, max_start + 1):
-                if self.can_place_component(comp_type, r, target_col):
-                    actions.append((comp_type, r, target_col))
+                if self.can_place_component(comp_type, r):
+                    actions.append((comp_type, r))
 
     def _add_wire_actions(self, actions: List[Tuple], target_col: int):
         """
@@ -533,39 +554,19 @@ class Breadboard:
             actions: List to append actions to
             target_col: Current target column (wires can connect up to this column)
         """
-        # Find the maximum column that has any components
-        # This ensures we can wire from all placed components, not just up to target_col
-        max_col = 0
-        for r in range(self.ROWS):
-            for c in range(self.COLUMNS):
-                if not self.is_empty(r, c):
-                    max_col = max(max_col, c)
-
-        # Use the larger of target_col and max_col to ensure all components can be wired
-        wire_col_limit = max(target_col, max_col)
-
-        # Get all active positions (potential wire sources)
-        source_points = {(r, c) for c in range(wire_col_limit + 1)
-                        for r in range(self.ROWS) if self.is_row_active(r)}
-
-        # Get all positions (potential wire targets)
-        target_points = {(r, c) for c in range(wire_col_limit + 1) for r in range(self.ROWS)}
-
-        # Track seen wire pairs to avoid duplicates (order-independent)
+        _ = target_col  # unused in node model
+        active_rows = [r for r in range(self.ROWS) if self.is_row_active(r)]
+        all_rows = list(range(self.ROWS))
         seen_wires = set()
 
-        # Try all possible wire connections
-        for r1, c1 in source_points:
-            for r2, c2 in target_points:
-                # Create order-independent key to avoid duplicate wires
-                wire_key = tuple(sorted(((r1, c1), (r2, c2))))
-
+        for r1 in active_rows:
+            for r2 in all_rows:
+                wire_key = tuple(sorted((r1, r2)))
                 if wire_key in seen_wires:
                     continue
-
-                if self.can_place_wire(r1, c1, r2, c2):
+                if self.can_place_wire(r1, r2):
                     seen_wires.add(wire_key)
-                    actions.append(("wire", r1, c1, r2, c2))
+                    actions.append(("wire", r1, r2))
 
     def _add_stop_action_if_valid(self, actions: List[Tuple]):
         """
@@ -591,7 +592,7 @@ class Breadboard:
         unique_types = len({c.type for c in self.placed_components if c.type not in ['wire', 'vin', 'vout']})
         return (comp_count * 10.0) + (unique_types * 5.0) - (wire_count * 1.0)
     
-    def _place_component(self, comp_type: str, start_row: int, col: int) -> Optional[Component]:
+    def _place_component(self, comp_type: str, start_row: int) -> Optional[Component]:
         """(Internal) Mutates the board state by placing a component.
 
         Note: Each component pin activates its ENTIRE ROW (not just the specific cell).
@@ -601,36 +602,34 @@ class Breadboard:
         self.component_counter += 1
         component = Component(
             type=comp_type,
-            pins=[(r, col) for r in range(start_row, start_row + info.pin_count)],
+            pins=[(r, 0) for r in range(start_row, start_row + info.pin_count)],
             id=self.component_counter
         )
         self.placed_components.append(component)
 
-        # Occupy grid and activate nets for all pins
+        # Occupy rows and activate nets for all pins
         for i, (r, c) in enumerate(component.pins):
-            self.grid[r][c] = (component, i)
+            self.row_pin_index.place_pin(r, c, component, i)
             self.active_nets.add(self.find(r))
 
-        # Auto-union component pins (component pins are inherently connected)
-        if len(component.pins) > 1:
-            first_row = component.pins[0][0]
-            for pin_row, _ in component.pins[1:]:
-                self.union(first_row, pin_row)
+        # NOTE: Component pins are NOT auto-unified in union-find structure
+        # Instead, components create edges in the connectivity graph (see _compute_connectivity_summary)
+        # This allows detection of degenerate components (all pins already on same net)
 
         if comp_type in ['vin', 'vout']: setattr(self, f"{comp_type}_placed", True)
         return component
 
-    def _place_wire(self, r1: int, c1: int, r2: int, c2: int) -> Optional[Component]:
+    def _place_wire(self, r1: int, r2: int) -> Optional[Component]:
         """(Internal) Mutates the board state by placing a wire.
 
         Note: Wire unions ENTIRE ROWS (r1 and r2), not just the specific cells.
         This is consistent with the row-based connectivity model where each row
         is a single electrical net.
         """
-        self.placed_wires.add(tuple(sorted(((r1, c1), (r2, c2)))))
+        self.placed_wires.add(tuple(sorted((r1, r2))))
         self.union(r1, r2)  # Unions entire rows, not just (r1,c1) and (r2,c2) cells
         self.component_counter += 1
-        component = Component(type="wire", pins=[(r1, c1), (r2, c2)], id=self.component_counter)
+        component = Component(type="wire", pins=[(r1, 0), (r2, 0)], id=self.component_counter)
         self.placed_components.append(component)
         self.active_nets.add(self.find(r1))
         return component
@@ -645,7 +644,7 @@ class Breadboard:
         new_board.VOUT_ROW = self.VOUT_ROW
         new_board.WORK_START_ROW = self.WORK_START_ROW
         new_board.WORK_END_ROW = self.WORK_END_ROW
-        new_board.grid = copy.deepcopy(self.grid)
+        new_board.row_pin_index = self.row_pin_index.clone()
         new_board.placed_components = copy.deepcopy(self.placed_components)
         new_board.component_counter = self.component_counter
         new_board.vin_placed = self.vin_placed
@@ -701,14 +700,23 @@ class Breadboard:
         Returns:
             Dictionary mapping (row, col) positions to net names
         """
-        # Collect all positions used by components
-        all_positions = self._collect_all_positions()
+        position_to_net: Dict[Tuple[int, int], str] = {}
+        root_to_net: Dict[int, str] = {}
+        net_counter = 0
 
-        # Assign initial net names
-        position_to_net = self._assign_initial_nets(all_positions)
-
-        # Merge nets connected by wires
-        self._merge_connected_nets(position_to_net)
+        for comp in self.placed_components:
+            for pin in comp.pins:
+                row = pin[0]
+                root = self.find(row)
+                if root not in root_to_net:
+                    if root == self.VSS_ROW:
+                        root_to_net[root] = "0"
+                    elif root == self.VDD_ROW:
+                        root_to_net[root] = "VDD"
+                    else:
+                        root_to_net[root] = f"n{net_counter}"
+                        net_counter += 1
+                position_to_net[pin] = root_to_net[root]
 
         return position_to_net
 
@@ -1126,208 +1134,6 @@ class Breadboard:
         ]
     
 # ============================================================
-# Checks and Tests (Unchanged)
-# ============================================================
-def run_tests():
-    """
-    Runs a series of checks to validate the Breadboard logic.
-    """
-    print("🔬 Running tests for Breadboard environment...")
-    
-    # --- Test 1: Initial State ---
-    print("\n--- Test 1: Initial State ---")
-    b0 = Breadboard()
-    assert b0.vin_placed and b0.vout_placed
-    assert len(b0.placed_components) == 2
-    assert b0.is_row_active(b0.VIN_ROW)  # VIN at row 1
-    assert b0.is_row_active(b0.VOUT_ROW)  # VOUT at row 28
-    assert not b0.is_row_active(10)
-    print("✅ Passed: Initial state is correct.")
 
-    # --- Test 2: Component Placement Rules ---
-    print("\n--- Test 2: Component Placement Rules ---")
-    assert not b0.can_place_component('vin', 10, 1)  # VIN already placed
-    assert not b0.can_place_component('resistor', 5, 0)  # Column 0 reserved
-    # Note: Can't place resistor at (5,1) yet - need to wire VIN to work area first
-    # First wire VIN to a work row to activate it
-    b0_wired = b0.apply_action(('wire', b0.VIN_ROW, 0, 5, 1))
-    assert b0_wired.is_row_active(5)
-    assert b0_wired.can_place_component('resistor', 5, 1)  # Now row 5 is active
-    print("✅ Passed: Component placement rules are enforced.")
-
-    # --- Test 3: Wiring Rules and State Immutability ---
-    print("\n--- Test 3: Wiring Rules & State Immutability ---")
-    # First wire VIN to row 5 to activate it
-    b1 = b0.apply_action(('wire', b0.VIN_ROW, 0, 5, 1))
-    assert b1.is_row_active(5)
-    # Now place resistor at rows 5-6
-    b1 = b1.apply_action(('resistor', 5, 1))
-    # Resistor is on rows 5-6, both should be active and auto-unioned
-    assert b1.is_row_active(5) and b1.is_row_active(6)
-    assert b1.find(5) == b1.find(6)  # Component pins are auto-connected
-    assert len(b0.placed_components) == 2  # Original board unchanged
-    assert not b0.is_row_active(6)  # Original board unchanged
-    b2 = b1.apply_action(('wire', 6, 1, 10, 1))
-    assert b2.find(6) == b2.find(10)  # Wire unions rows 6 and 10
-    assert b2.is_row_active(10)
-    print("✅ Passed: Wiring rules and state immutability are correct.")
-
-    # --- Test 4: Circuit Completion and Reward ---
-    print("\n--- Test 4: Circuit Completion and Reward ---")
-    assert not b2.is_complete_and_valid()
-    assert b2.get_reward() == 0.0
-    # Build a complete circuit: VIN -> R1 -> R2 -> VOUT, with R3 to VSS and R4 to VDD
-    # Place R2 to extend circuit
-    b3 = b2.apply_action(('resistor', 7, 2))  # R2 at rows 7-8
-    b3 = b3.apply_action(('wire', 6, 1, 7, 2))  # Connect R1 to R2
-    # Place R3 connecting to VSS (component pins must touch VSS)
-    b3 = b3.apply_action(('resistor', b0.VSS_ROW, 2))  # R3 at VSS_ROW to VSS_ROW+1
-    b3 = b3.apply_action(('wire', 7, 2, b0.VSS_ROW + 1, 2))  # Connect R2 to R3
-    # Place R4 connecting to VDD
-    b3 = b3.apply_action(('resistor', b0.VDD_ROW - 1, 3))  # R4 at VDD_ROW-1 to VDD_ROW
-    b4 = b3.apply_action(('wire', 8, 2, b0.VDD_ROW - 1, 3))  # Connect R2 to R4
-    # Connect to VOUT
-    b4 = b4.apply_action(('wire', 8, 2, b0.VOUT_ROW, 0))  # Connect to VOUT
-    assert b4.is_complete_and_valid(), "Circuit should be complete after connecting VIN, VOUT, and power rails."
-    assert b4.get_reward() > 0.0
-    print("✅ Passed: Circuit completion and reward logic are working.")
-
-    print("\n🎉 All simple checks passed!")
-
-def test_netlist_conversion():
-    """
-    Tests the to_netlist() method to ensure circuits are properly converted to SPICE format.
-    """
-    print("\n🔬 Running netlist conversion tests...")
-
-    # --- Test 1: Incomplete Circuit Returns None ---
-    print("\n--- Test 1: Incomplete Circuit Returns None ---")
-    b0 = Breadboard()
-    assert b0.to_netlist() is None, "Incomplete circuit should return None"
-    print("✅ Passed: Incomplete circuit returns None")
-
-    # --- Test 2: Simple RC Circuit ---
-    print("\n--- Test 2: Simple RC Circuit Netlist ---")
-    # Build: VIN -> Resistor -> Capacitor -> VOUT, with power rail connections
-    b1 = Breadboard()
-    b1 = b1.apply_action(('resistor', 5, 1))  # R on rows 5-6 (pins auto-connected)
-    b1 = b1.apply_action(('wire', b1.VIN_ROW, 0, 5, 1))  # Connect VIN to R pin 1
-    b1 = b1.apply_action(('capacitor', 7, 2))  # C on rows 7-8 (pins auto-connected)
-    b1 = b1.apply_action(('wire', 6, 1, 7, 2))  # Connect R pin 2 to C pin 1
-    # Add power rail connections
-    b1 = b1.apply_action(('resistor', b1.VSS_ROW, 2))  # R2 touching VSS
-    b1 = b1.apply_action(('wire', 7, 2, b1.VSS_ROW + 1, 2))  # Connect C to R2
-    b1 = b1.apply_action(('resistor', b1.VDD_ROW - 1, 3))  # R3 touching VDD
-    b1 = b1.apply_action(('wire', 8, 2, b1.VDD_ROW - 1, 3))  # Connect C to R3
-    b1 = b1.apply_action(('wire', 8, 2, b1.VOUT_ROW, 0))  # Connect to VOUT
-
-    netlist = b1.to_netlist()
-    assert netlist is not None, "Complete circuit should return a netlist"
-    assert "VIN" in netlist, "Netlist should contain VIN source"
-    assert "VDD" in netlist, "Netlist should contain VDD source"
-    assert "R1" in netlist, "Netlist should contain resistor R1"
-    assert "C1" in netlist, "Netlist should contain capacitor C1"
-    assert ".ac dec" in netlist, "Netlist should contain AC analysis command"
-    assert ".end" in netlist, "Netlist should end with .end"
-    print("✅ Passed: RC circuit generates valid netlist")
-    print(f"\nGenerated netlist:\n{netlist}\n")
-
-    # --- Test 3: Multiple Components of Same Type ---
-    print("\n--- Test 3: Multiple Components of Same Type ---")
-    b2 = Breadboard()
-    b2 = b2.apply_action(('resistor', 5, 1))  # R1 on rows 5-6
-    b2 = b2.apply_action(('wire', b2.VIN_ROW, 0, 5, 1))  # Connect VIN to R1
-    b2 = b2.apply_action(('resistor', 7, 2))  # R2 on rows 7-8
-    b2 = b2.apply_action(('wire', 6, 1, 7, 2))  # Connect R1 to R2
-    # Add power rail connections
-    b2 = b2.apply_action(('resistor', b2.VSS_ROW, 2))  # R3 touching VSS
-    b2 = b2.apply_action(('wire', 7, 2, b2.VSS_ROW + 1, 2))
-    b2 = b2.apply_action(('resistor', b2.VDD_ROW - 1, 3))  # R4 touching VDD
-    b2 = b2.apply_action(('wire', 8, 2, b2.VDD_ROW - 1, 3))
-    b2 = b2.apply_action(('wire', 8, 2, b2.VOUT_ROW, 0))  # Connect to VOUT
-
-    netlist2 = b2.to_netlist()
-    assert netlist2 is not None
-    assert "R1" in netlist2, "Should have R1"
-    assert "R2" in netlist2, "Should have R2"
-    r1_count = netlist2.count("R1")
-    r2_count = netlist2.count("R2")
-    assert r1_count >= 1 and r2_count >= 1, "Both resistors should be in netlist"
-    print("✅ Passed: Multiple components of same type handled correctly")
-
-    # --- Test 4: Net Naming and Connectivity ---
-    print("\n--- Test 4: Net Naming and Connectivity ---")
-    b3 = Breadboard()
-    b3 = b3.apply_action(('resistor', 5, 1))  # Resistor pins auto-connected
-    b3 = b3.apply_action(('wire', b3.VIN_ROW, 0, 5, 1))
-    # Add power rail connections
-    b3 = b3.apply_action(('resistor', b3.VSS_ROW, 2))
-    b3 = b3.apply_action(('wire', 5, 1, b3.VSS_ROW + 1, 2))
-    b3 = b3.apply_action(('resistor', b3.VDD_ROW - 1, 3))
-    b3 = b3.apply_action(('wire', 6, 1, b3.VDD_ROW - 1, 3))
-    b3 = b3.apply_action(('wire', 6, 1, b3.VOUT_ROW, 0))
-
-    netlist3 = b3.to_netlist()
-    assert netlist3 is not None
-    # Parse the netlist to check that VIN and VOUT are on the same net via the resistor
-    lines = netlist3.split('\n')
-    resistor_line = [l for l in lines if l.startswith('R1')][0]
-    # The resistor should connect two nets
-    assert 'R1' in resistor_line, "Resistor line should exist"
-    print("✅ Passed: Net naming and connectivity correct")
-
-    # --- Test 5: Transistor Component ---
-    print("\n--- Test 5: Transistor Component (NMOS) ---")
-    b4 = Breadboard()
-    b4 = b4.apply_action(('nmos3', 5, 1))  # NMOS on rows 5-6-7 (drain, gate, source - pins auto-connected)
-    b4 = b4.apply_action(('wire', b4.VIN_ROW, 0, 5, 1))  # VIN to drain
-    # Add power rail connections
-    b4 = b4.apply_action(('resistor', b4.VSS_ROW, 2))
-    b4 = b4.apply_action(('wire', 5, 1, b4.VSS_ROW + 1, 2))
-    b4 = b4.apply_action(('resistor', b4.VDD_ROW - 1, 3))
-    b4 = b4.apply_action(('wire', 7, 1, b4.VDD_ROW - 1, 3))
-    b4 = b4.apply_action(('wire', 7, 1, b4.VOUT_ROW, 0))  # source to VOUT
-
-    netlist4 = b4.to_netlist()
-    assert netlist4 is not None
-    assert "M1" in netlist4, "Should contain NMOS transistor (M1)"
-    assert "NMOS_MODEL" in netlist4, "Should reference NMOS model"
-    print("✅ Passed: Transistor component handled correctly")
-
-    # --- Test 6: Proper Multi-Net RC Low-Pass Filter ---
-    print("\n--- Test 6: Proper Multi-Net RC Low-Pass Filter ---")
-    # Build a proper RC low-pass filter: VIN --R-- net1 --C-- VSS, VOUT at net1, with VDD connection
-    b5 = Breadboard()
-    # First wire VIN to work area
-    b5 = b5.apply_action(('wire', b5.VIN_ROW, 0, 10, 1))  # Activate row 10
-    # Place resistor between input and middle node
-    b5 = b5.apply_action(('resistor', 10, 1))  # R on rows 10-11 (pins auto-connected)
-    # Place capacitor from middle node to VSS
-    b5 = b5.apply_action(('capacitor', 12, 2))  # C on rows 12-13 (pins auto-connected)
-    b5 = b5.apply_action(('wire', 11, 1, 12, 2))  # R output to C input
-    b5 = b5.apply_action(('wire', 13, 2, 0, 2))  # C to VSS (ground)
-    # Add VDD connection
-    b5 = b5.apply_action(('resistor', b5.VDD_ROW - 1, 3))  # R2 touching VDD
-    b5 = b5.apply_action(('wire', 11, 1, b5.VDD_ROW - 1, 3))  # Connect to VDD
-    # Connect VOUT to the middle node (between R and C)
-    b5 = b5.apply_action(('wire', 11, 1, b5.VOUT_ROW, 0))  # Middle node to VOUT
-
-    netlist5 = b5.to_netlist()
-    assert netlist5 is not None, "RC filter should generate netlist"
-
-    # Verify structure: should have VIN net, middle net (at VOUT), and ground
-    lines5 = netlist5.split('\n')
-    r_line = [l for l in lines5 if l.startswith('R1')][0]
-    c_line = [l for l in lines5 if l.startswith('C1')][0]
-
-    # Resistor should connect VIN net to middle net
-    # Capacitor should connect middle net to ground (0)
-    assert '0' in c_line, "Capacitor should connect to ground"
-    print("✅ Passed: Multi-net RC filter generates correct topology")
-    print(f"\nRC Filter netlist:\n{netlist5}\n")
-
-    print("\n🎉 All netlist conversion tests passed!")
-
-if __name__ == "__main__":
-    run_tests()
-    test_netlist_conversion()
+if __name__ == '__main__':
+    print("Run the dedicated pytest suite for validation.")

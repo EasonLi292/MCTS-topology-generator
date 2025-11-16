@@ -62,8 +62,8 @@ def build_cmos_inverter():
     pmos_gate = pmos_start + 1
     pmos_source = pmos_start + 2
     print(f"\n[Step 1] Placing PMOS at rows {pmos_start}-{pmos_gate}-{pmos_source}...")
-    b = b.apply_action(('wire', b.VDD_ROW, 0, pmos_source, 1))  # Activate PMOS source from VDD
-    b = b.apply_action(('pmos3', pmos_start, 1))
+    b = b.apply_action(('wire', b.VDD_ROW, pmos_source))  # Activate PMOS source from VDD
+    b = b.apply_action(('pmos3', pmos_start))
     print(f"  PMOS pins: drain={b.placed_components[-1].pins[0]}, gate={b.placed_components[-1].pins[1]}, source={b.placed_components[-1].pins[2]}")
 
     # Step 2: Connect PMOS source to VDD
@@ -76,8 +76,8 @@ def build_cmos_inverter():
     nmos_gate = nmos_start + 1
     nmos_source = nmos_start + 2
     print(f"\n[Step 3] Placing NMOS at rows {nmos_start}-{nmos_gate}-{nmos_source}...")
-    b = b.apply_action(('wire', b.VSS_ROW, 0, nmos_source, 1))  # Activate NMOS source from VSS
-    b = b.apply_action(('nmos3', nmos_start, 1))
+    b = b.apply_action(('wire', b.VSS_ROW, nmos_source))  # Activate NMOS source from VSS
+    b = b.apply_action(('nmos3', nmos_start))
     print(f"  NMOS pins: drain={b.placed_components[-1].pins[0]}, gate={b.placed_components[-1].pins[1]}, source={b.placed_components[-1].pins[2]}")
 
     # Step 4: Connect NMOS source to VSS (ground)
@@ -87,21 +87,21 @@ def build_cmos_inverter():
 
     # Step 5: Connect both drains together (output node)
     print(f"\n[Step 5] Connecting PMOS drain (row {pmos_start}) to NMOS drain (row {nmos_start})...")
-    b = b.apply_action(('wire', pmos_start, 1, nmos_start, 1))
+    b = b.apply_action(('wire', pmos_start, nmos_start))
     print(f"  Drains connected: {b.find(pmos_start) == b.find(nmos_start)}")
 
     # Step 6: Connect both gates to VIN
     print(f"\n[Step 6] Connecting PMOS gate (row {pmos_gate}) to VIN (row {b.VIN_ROW})...")
-    b = b.apply_action(('wire', b.VIN_ROW, 0, pmos_gate, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, pmos_gate))
     print(f"  PMOS gate connected to VIN: {b.find(pmos_gate) == b.find(b.VIN_ROW)}")
 
     print(f"\n[Step 7] Connecting NMOS gate (row {nmos_gate}) to VIN (row {b.VIN_ROW})...")
-    b = b.apply_action(('wire', b.VIN_ROW, 0, nmos_gate, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, nmos_gate))
     print(f"  NMOS gate connected to VIN: {b.find(nmos_gate) == b.find(b.VIN_ROW)}")
 
     # Step 8: Connect output node (drain junction) to VOUT
     print(f"\n[Step 8] Connecting output node (row {pmos_start}) to VOUT (row {b.VOUT_ROW})...")
-    b = b.apply_action(('wire', pmos_start, 1, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', pmos_start, b.VOUT_ROW))
     print(f"  Output connected to VOUT: {b.find(pmos_start) == b.find(b.VOUT_ROW)}")
 
     return b

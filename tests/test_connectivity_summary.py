@@ -31,13 +31,13 @@ def test_degenerate_component_detection():
 
     # Place a resistor in work area
     work_row = b.WORK_START_ROW
-    b = b.apply_action(('resistor', work_row, 1))
+    b = b.apply_action(('resistor', work_row))
 
     # Connect VIN to both pins of the resistor (making it degenerate)
     # First wire VIN to top pin
-    b = b.apply_action(('wire', b.VIN_ROW, 0, work_row, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, work_row))
     # Then wire VIN to bottom pin (both pins now on same net)
-    b = b.apply_action(('wire', b.VIN_ROW, 0, work_row + 1, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, work_row + 1))
 
     # Get connectivity summary
     summary = b.get_connectivity_summary()
@@ -56,7 +56,7 @@ def test_vin_vout_same_net_detection():
     b = Breadboard()
 
     # Wire VIN directly to VOUT (short circuit, no components)
-    b = b.apply_action(('wire', b.VIN_ROW, 0, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', b.VIN_ROW, b.VOUT_ROW))
 
     # Get connectivity summary
     summary = b.get_connectivity_summary()
@@ -77,20 +77,20 @@ def test_component_nets_tracking():
     # Build a simple circuit with multiple nets
     # Place resistor R1 between two nets
     r1_row = b.WORK_START_ROW
-    b = b.apply_action(('resistor', r1_row, 1))
+    b = b.apply_action(('resistor', r1_row))
 
     # Connect VIN to R1 top pin (creates net1)
-    b = b.apply_action(('wire', b.VIN_ROW, 0, r1_row, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, r1_row))
 
     # Place resistor R2 below R1
     r2_row = r1_row + 3
-    b = b.apply_action(('resistor', r2_row, 2))
+    b = b.apply_action(('resistor', r2_row))
 
     # Connect R1 bottom to R2 top (creates net2)
-    b = b.apply_action(('wire', r1_row + 1, 1, r2_row, 2))
+    b = b.apply_action(('wire', r1_row + 1, r2_row))
 
     # Connect R2 bottom to VOUT (net2 continues to VOUT)
-    b = b.apply_action(('wire', r2_row + 1, 2, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', r2_row + 1, b.VOUT_ROW))
 
     # Get connectivity summary
     summary = b.get_connectivity_summary()
@@ -119,17 +119,17 @@ def test_visited_nets_bfs():
     r1_row = b.WORK_START_ROW
     r2_row = r1_row + 3
 
-    b = b.apply_action(('resistor', r1_row, 1))
-    b = b.apply_action(('resistor', r2_row, 2))
+    b = b.apply_action(('resistor', r1_row))
+    b = b.apply_action(('resistor', r2_row))
 
     # Connect VIN → R1
-    b = b.apply_action(('wire', b.VIN_ROW, 0, r1_row, 1))
+    b = b.apply_action(('wire', b.VIN_ROW, r1_row))
 
     # Connect R1 → R2
-    b = b.apply_action(('wire', r1_row + 1, 1, r2_row, 2))
+    b = b.apply_action(('wire', r1_row + 1, r2_row))
 
     # Connect R2 → VOUT
-    b = b.apply_action(('wire', r2_row + 1, 2, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', r2_row + 1, b.VOUT_ROW))
 
     # Get connectivity summary
     summary = b.get_connectivity_summary()
@@ -169,21 +169,21 @@ def test_rails_in_component_flag():
     r3_row = r2_row + 3
 
     # R1: VIN to middle node
-    b = b.apply_action(('resistor', r1_row, 1))
-    b = b.apply_action(('wire', b.VIN_ROW, 0, r1_row, 1))
+    b = b.apply_action(('resistor', r1_row))
+    b = b.apply_action(('wire', b.VIN_ROW, r1_row))
 
     # R2: middle node to VSS
-    b = b.apply_action(('resistor', r2_row, 2))
-    b = b.apply_action(('wire', r1_row + 1, 1, r2_row, 2))  # Connect R1 bottom to R2 top (middle node)
-    b = b.apply_action(('wire', r2_row + 1, 2, b.VSS_ROW, 0))  # R2 bottom to VSS (R2 touches VSS)
+    b = b.apply_action(('resistor', r2_row))
+    b = b.apply_action(('wire', r1_row + 1, r2_row))  # Connect R1 bottom to R2 top (middle node)
+    b = b.apply_action(('wire', r2_row + 1, b.VSS_ROW))  # R2 bottom to VSS (R2 touches VSS)
 
     # R3: middle node to VDD
-    b = b.apply_action(('resistor', r3_row, 3))
-    b = b.apply_action(('wire', r1_row + 1, 1, r3_row, 3))  # middle node to R3 top
-    b = b.apply_action(('wire', r3_row + 1, 3, b.VDD_ROW, 0))  # R3 bottom to VDD (R3 touches VDD)
+    b = b.apply_action(('resistor', r3_row))
+    b = b.apply_action(('wire', r1_row + 1, r3_row))  # middle node to R3 top
+    b = b.apply_action(('wire', r3_row + 1, b.VDD_ROW))  # R3 bottom to VDD (R3 touches VDD)
 
     # VOUT taps the middle node (between R1 and R2/R3)
-    b = b.apply_action(('wire', r1_row + 1, 1, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', r1_row + 1, b.VOUT_ROW))
 
     # Get connectivity summary
     summary = b.get_connectivity_summary()
@@ -221,7 +221,7 @@ def test_has_active_components():
 
     # Test 2: Circuit with only wire (no real components)
     b2 = Breadboard()
-    b2 = b2.apply_action(('wire', b2.VIN_ROW, 0, b2.VOUT_ROW, 0))
+    b2 = b2.apply_action(('wire', b2.VIN_ROW, b2.VOUT_ROW))
     summary2 = b2.get_connectivity_summary()
 
     # Wire is not an active component
@@ -231,8 +231,8 @@ def test_has_active_components():
     # Test 3: Circuit with actual component
     b3 = Breadboard()
     r_row = b3.WORK_START_ROW
-    b3 = b3.apply_action(('resistor', r_row, 1))
-    b3 = b3.apply_action(('wire', b3.VIN_ROW, 0, r_row, 1))
+    b3 = b3.apply_action(('resistor', r_row))
+    b3 = b3.apply_action(('wire', b3.VIN_ROW, r_row))
     summary3 = b3.get_connectivity_summary()
 
     assert summary3["has_active_components"], "Circuit with resistor should have active components"
@@ -251,15 +251,15 @@ def test_validation_formula_edge_cases():
     r2_row = r1_row + 3
 
     # VIN → R1 → middle → R2 → VSS, VOUT taps middle (no VDD connection)
-    b1 = b1.apply_action(('resistor', r1_row, 1))
-    b1 = b1.apply_action(('wire', b1.VIN_ROW, 0, r1_row, 1))  # VIN to R1
+    b1 = b1.apply_action(('resistor', r1_row))
+    b1 = b1.apply_action(('wire', b1.VIN_ROW, r1_row))  # VIN to R1
 
-    b1 = b1.apply_action(('resistor', r2_row, 2))
-    b1 = b1.apply_action(('wire', r1_row + 1, 1, r2_row, 2))  # R1 to R2 (middle node)
-    b1 = b1.apply_action(('wire', r2_row + 1, 2, b1.VSS_ROW, 0))  # R2 to VSS (touches VSS)
+    b1 = b1.apply_action(('resistor', r2_row))
+    b1 = b1.apply_action(('wire', r1_row + 1, r2_row))  # R1 to R2 (middle node)
+    b1 = b1.apply_action(('wire', r2_row + 1, b1.VSS_ROW))  # R2 to VSS (touches VSS)
 
     # VOUT taps middle node
-    b1 = b1.apply_action(('wire', r1_row + 1, 1, b1.VOUT_ROW, 0))
+    b1 = b1.apply_action(('wire', r1_row + 1, b1.VOUT_ROW))
 
     summary1 = b1.get_connectivity_summary()
     assert summary1["touches_vss"], "Should touch VSS"
@@ -275,15 +275,15 @@ def test_validation_formula_edge_cases():
     r2b_row = r1b_row + 3
 
     # VIN → R1 → middle → R2 → VDD, VOUT taps middle (no VSS connection)
-    b2 = b2.apply_action(('resistor', r1b_row, 1))
-    b2 = b2.apply_action(('wire', b2.VIN_ROW, 0, r1b_row, 1))  # VIN to R1
+    b2 = b2.apply_action(('resistor', r1b_row))
+    b2 = b2.apply_action(('wire', b2.VIN_ROW, r1b_row))  # VIN to R1
 
-    b2 = b2.apply_action(('resistor', r2b_row, 2))
-    b2 = b2.apply_action(('wire', r1b_row + 1, 1, r2b_row, 2))  # R1 to R2 (middle node)
-    b2 = b2.apply_action(('wire', r2b_row + 1, 2, b2.VDD_ROW, 0))  # R2 to VDD (touches VDD)
+    b2 = b2.apply_action(('resistor', r2b_row))
+    b2 = b2.apply_action(('wire', r1b_row + 1, r2b_row))  # R1 to R2 (middle node)
+    b2 = b2.apply_action(('wire', r2b_row + 1, b2.VDD_ROW))  # R2 to VDD (touches VDD)
 
     # VOUT taps middle node
-    b2 = b2.apply_action(('wire', r1b_row + 1, 1, b2.VOUT_ROW, 0))
+    b2 = b2.apply_action(('wire', r1b_row + 1, b2.VOUT_ROW))
 
     summary2 = b2.get_connectivity_summary()
     assert summary2["touches_vdd"], "Should touch VDD"
@@ -300,18 +300,18 @@ def test_validation_formula_edge_cases():
     r3c_row = r2c_row + 3
 
     # VIN → R1 → middle, R2: middle → VDD, R3: middle → VSS (VOUT not connected)
-    b3 = b3.apply_action(('resistor', r1c_row, 1))
-    b3 = b3.apply_action(('wire', b3.VIN_ROW, 0, r1c_row, 1))  # VIN to R1
+    b3 = b3.apply_action(('resistor', r1c_row))
+    b3 = b3.apply_action(('wire', b3.VIN_ROW, r1c_row))  # VIN to R1
 
     # R2 to VDD
-    b3 = b3.apply_action(('resistor', r2c_row, 2))
-    b3 = b3.apply_action(('wire', r1c_row + 1, 1, r2c_row, 2))  # middle to R2
-    b3 = b3.apply_action(('wire', r2c_row + 1, 2, b3.VDD_ROW, 0))  # R2 to VDD
+    b3 = b3.apply_action(('resistor', r2c_row))
+    b3 = b3.apply_action(('wire', r1c_row + 1, r2c_row))  # middle to R2
+    b3 = b3.apply_action(('wire', r2c_row + 1, b3.VDD_ROW))  # R2 to VDD
 
     # R3 to VSS
-    b3 = b3.apply_action(('resistor', r3c_row, 3))
-    b3 = b3.apply_action(('wire', r1c_row + 1, 1, r3c_row, 3))  # middle to R3
-    b3 = b3.apply_action(('wire', r3c_row + 1, 3, b3.VSS_ROW, 0))  # R3 to VSS
+    b3 = b3.apply_action(('resistor', r3c_row))
+    b3 = b3.apply_action(('wire', r1c_row + 1, r3c_row))  # middle to R3
+    b3 = b3.apply_action(('wire', r3c_row + 1, b3.VSS_ROW))  # R3 to VSS
 
     # VOUT is NOT connected - remains isolated
 
@@ -330,21 +330,21 @@ def test_validation_formula_edge_cases():
     r3d_row = r2d_row + 3
 
     # VIN → R1 → middle, R2: middle → VSS, R3: middle → VDD, VOUT taps middle
-    b4 = b4.apply_action(('resistor', r1d_row, 1))
-    b4 = b4.apply_action(('wire', b4.VIN_ROW, 0, r1d_row, 1))
+    b4 = b4.apply_action(('resistor', r1d_row))
+    b4 = b4.apply_action(('wire', b4.VIN_ROW, r1d_row))
 
     # R2 to VSS
-    b4 = b4.apply_action(('resistor', r2d_row, 2))
-    b4 = b4.apply_action(('wire', r1d_row + 1, 1, r2d_row, 2))
-    b4 = b4.apply_action(('wire', r2d_row + 1, 2, b4.VSS_ROW, 0))
+    b4 = b4.apply_action(('resistor', r2d_row))
+    b4 = b4.apply_action(('wire', r1d_row + 1, r2d_row))
+    b4 = b4.apply_action(('wire', r2d_row + 1, b4.VSS_ROW))
 
     # R3 to VDD
-    b4 = b4.apply_action(('resistor', r3d_row, 3))
-    b4 = b4.apply_action(('wire', r1d_row + 1, 1, r3d_row, 3))
-    b4 = b4.apply_action(('wire', r3d_row + 1, 3, b4.VDD_ROW, 0))
+    b4 = b4.apply_action(('resistor', r3d_row))
+    b4 = b4.apply_action(('wire', r1d_row + 1, r3d_row))
+    b4 = b4.apply_action(('wire', r3d_row + 1, b4.VDD_ROW))
 
     # VOUT taps middle
-    b4 = b4.apply_action(('wire', r1d_row + 1, 1, b4.VOUT_ROW, 0))
+    b4 = b4.apply_action(('wire', r1d_row + 1, b4.VOUT_ROW))
 
     summary4 = b4.get_connectivity_summary()
     assert summary4["touches_vdd"], "Should touch VDD"

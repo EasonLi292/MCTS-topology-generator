@@ -33,10 +33,10 @@ def choose_row(board: Breadboard, offset: int, height: int = 1) -> int:
 def attach_vin_via_gate(board: Breadboard, target_row: int, target_col: int, driver_col: int = 5) -> Breadboard:
     """Attach VIN to a target node using an NMOS gate interface."""
     driver_row = min(target_row, board.WORK_END_ROW - 2)
-    board = board.apply_action(('nmos3', driver_row, driver_col))
-    board = board.apply_action(('wire', board.VIN_ROW, 0, driver_row + 1, driver_col))
-    board = board.apply_action(('wire', driver_row, driver_col, target_row, target_col))
-    board = board.apply_action(('wire', driver_row + 2, driver_col, target_row, target_col))
+    board = board.apply_action(('nmos3', driver_row))
+    board = board.apply_action(('wire', board.VIN_ROW, driver_row + 1))
+    board = board.apply_action(('wire', driver_row, target_row))
+    board = board.apply_action(('wire', driver_row + 2, target_row))
     return board
 
 def build_rc_lowpass_filter():
@@ -54,41 +54,41 @@ def build_rc_lowpass_filter():
     # Step 1: Place resistor (rows 5-6)
     resistor_row = choose_row(b, 3, height=2)
     print(f"\n[Step 1] Placing resistor (rows {resistor_row}-{resistor_row + 1})...")
-    b = b.apply_action(('resistor', resistor_row, 1))
+    b = b.apply_action(('resistor', resistor_row))
     b = attach_vin_via_gate(b, resistor_row, 1, driver_col=5)
 
     # Step 2: Place capacitor (rows 8-9)
     capacitor_row = choose_row(b, 6, height=2)
     print(f"[Step 2] Placing capacitor (rows {capacitor_row}-{capacitor_row + 1})...")
-    b = b.apply_action(('capacitor', capacitor_row, 1))
+    b = b.apply_action(('capacitor', capacitor_row))
 
     # Step 3: Connect resistor output to capacitor input (midpoint)
     print("[Step 3] Connecting resistor to capacitor...")
-    b = b.apply_action(('wire', resistor_row + 1, 1, capacitor_row, 1))
+    b = b.apply_action(('wire', resistor_row + 1, capacitor_row))
 
     # Step 4: Connect capacitor bottom to ground
     print("[Step 4] Adding ground resistor load...")
     ground_res_row = capacitor_row
-    b = b.apply_action(('resistor', ground_res_row, 3))
-    b = b.apply_action(('wire', ground_res_row, 3, capacitor_row + 1, 1))
-    b = b.apply_action(('wire', ground_res_row + 1, 3, b.VSS_ROW, 0))
+    b = b.apply_action(('resistor', ground_res_row))
+    b = b.apply_action(('wire', ground_res_row, capacitor_row + 1))
+    b = b.apply_action(('wire', ground_res_row + 1, b.VSS_ROW))
 
     # Step 5: Connect VOUT to midpoint
     print("[Step 5] Connecting VOUT to midpoint...")
-    b = b.apply_action(('wire', resistor_row + 1, 1, b.VOUT_ROW, 0))
+    b = b.apply_action(('wire', resistor_row + 1, b.VOUT_ROW))
 
     # Step 6: Add inductor for more complexity (makes RLC filter)
     inductor_row = choose_row(b, 9, height=2)
     print("[Step 6] Adding inductor in series with capacitor...")
-    b = b.apply_action(('inductor', inductor_row, 1))
-    b = b.apply_action(('wire', capacitor_row + 1, 1, inductor_row, 1))  # Cap to inductor
-    b = b.apply_action(('wire', inductor_row + 1, 1, b.VSS_ROW, 0))  # Inductor to ground
+    b = b.apply_action(('inductor', inductor_row))
+    b = b.apply_action(('wire', capacitor_row + 1, inductor_row))  # Cap to inductor
+    b = b.apply_action(('wire', inductor_row + 1, b.VSS_ROW))  # Inductor to ground
 
     # Add supply resistor in column 2 to tie circuit to VDD
     supply_res_row = resistor_row
-    b = b.apply_action(('resistor', supply_res_row, 2))
-    b = b.apply_action(('wire', supply_res_row, 2, resistor_row + 1, 1))
-    b = b.apply_action(('wire', supply_res_row + 1, 2, b.VDD_ROW, 0))
+    b = b.apply_action(('resistor', supply_res_row))
+    b = b.apply_action(('wire', supply_res_row, resistor_row + 1))
+    b = b.apply_action(('wire', supply_res_row + 1, b.VDD_ROW))
 
     print("\n✅ RC Low-Pass Filter built successfully!")
     return b
