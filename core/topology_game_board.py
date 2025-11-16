@@ -159,6 +159,7 @@ class RowPinIndex:
 class Breadboard:
     DEFAULT_ROWS = 15
     MIN_ROWS = 6  # Need VIN, VOUT, power rails, and at least one work row
+    MIN_ACTIVE_COMPONENTS = 2  # Non-wire components required for a valid circuit
 
     def __init__(self, rows: int = DEFAULT_ROWS):
         if rows < self.MIN_ROWS:
@@ -844,6 +845,7 @@ class Breadboard:
             "degenerate_component": False,
             "vin_on_power_rail": False,
             "vout_on_power_rail": False,
+            "component_count": 0,
             "valid": False,
         }
 
@@ -880,12 +882,14 @@ class Breadboard:
         touches_vdd = False
         touches_vss = False
         has_active_components = False
+        component_count = 0
 
         for comp in self.placed_components:
             if comp.type in ['vin', 'vout', 'wire']:
                 continue
 
             has_active_components = True
+            component_count += 1
             nets = {position_to_net[pin] for pin in comp.pins}
 
             if len(nets) < 2:
@@ -907,6 +911,7 @@ class Breadboard:
                     adjacency[n2].add(n1)
 
         summary["has_active_components"] = has_active_components
+        summary["component_count"] = component_count
 
         if not has_active_components:
             return summary
@@ -931,16 +936,15 @@ class Breadboard:
         summary["rails_in_component"]["VDD"] = "VDD" in visited
         summary["rails_in_component"]["0"] = "0" in visited
 
-        # RELAXED: Remove requirement that VDD/VSS must be reachable from VIN
-        # Old strict requirement required signal path through both power rails
-        # New requirement: just need to touch power rails and have VIN->VOUT path
+        # Valid if VIN can reach VOUT through components, every component is on that path,
+        # circuit has at least MIN_ACTIVE_COMPONENTS active components, and it touches both rails.
         summary["valid"] = (
-            touches_vdd and touches_vss and
+            component_count >= self.MIN_ACTIVE_COMPONENTS and
             summary["reachable_vout"] and
-            summary["all_components_reachable"]
-            # REMOVED overly strict requirements:
-            # and summary["rails_in_component"]["VDD"]
-            # and summary["rails_in_component"]["0"]
+            summary["all_components_reachable"] and
+            has_active_components and
+            summary["touches_vdd"] and
+            summary["touches_vss"]
         )
 
         summary["component_nets"] = component_nets
@@ -1039,16 +1043,27 @@ class Breadboard:
         Returns:
             Component ID string (e.g., "R1", "M2", "Q1")
         """
-        # MOSFETs must use 'M' prefix in SPICE
+        prefix_map = {
+            'resistor': 'R',
+            'capacitor': 'C',
+            'inductor': 'L',
+            'diode': 'D',
+            'nmos3': 'M',
+            'pmos3': 'M',
+            'npn': 'Q',
+            'pnp': 'Q',
+            'vin': 'V',
+            'vout': 'V',
+        }
+
         if comp_type in ['nmos3', 'pmos3']:
             comp_prefix = 'M'
             counter_key = 'mosfet'  # Unified counter for all MOSFETs
-        # BJTs (both NPN and PNP) must use 'Q' prefix in SPICE
         elif comp_type in ['npn', 'pnp']:
             comp_prefix = 'Q'
             counter_key = 'bjt'  # Unified counter for all BJTs
         else:
-            comp_prefix = comp_type[0].upper()
+            comp_prefix = prefix_map.get(comp_type, comp_type[0].upper())
             counter_key = comp_type
 
         # Increment counter

@@ -218,9 +218,9 @@ def test_wire_ordering_constraint():
         print(f"\n   Checking if row 5 is active: {board.is_row_active(5)}")
         print(f"   Checking if VDD row {board.VDD_ROW} is active: {board.is_row_active(board.VDD_ROW)}")
 
-        return False
+        assert False, "Wire ordering constraint should block VDD→work row"
 
-    return True
+    assert True
 
 
 if __name__ == "__main__":

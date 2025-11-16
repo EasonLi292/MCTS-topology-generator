@@ -8,7 +8,7 @@ from topology_game_board import Breadboard
 from spice_simulator import run_ac_simulation, calculate_reward_from_simulation
 
 # Reward tuning constants
-INCOMPLETE_REWARD_CAP = 40.0
+INCOMPLETE_REWARD_CAP = 20.0
 # Completed circuits should always dominate heuristic-only scores; align with SPICE baseline
 COMPLETION_BASELINE_REWARD = 100.0
 
@@ -351,20 +351,19 @@ class MCTS:
             return -15.0
 
         # Reward component count and diversity
-        heuristic_reward = (metrics['num_components'] * 5.0) + \
-                          (metrics['unique_types'] * 8.0) + \
+        heuristic_reward = (metrics['num_components'] * 6.0) + \
+                          (metrics['unique_types'] * 10.0) + \
                           connection_bonus
 
-        # IMPROVED: Progressive rewards for meeting validation requirements
-        # This guides the search toward valid circuits step-by-step
+        # Progressive rewards to strongly guide towards validity
         if conn.get('touches_vdd', False):
-            heuristic_reward += 8.0  # Reward touching VDD
+            heuristic_reward += 15.0
         if conn.get('touches_vss', False):
-            heuristic_reward += 8.0  # Reward touching VSS
+            heuristic_reward += 15.0
         if conn.get('reachable_vout', False):
-            heuristic_reward += 15.0  # Big reward for VIN->VOUT path
+            heuristic_reward += 30.0
         if conn.get('all_components_reachable'):
-            heuristic_reward += 10.0  # Reward having all components connected
+            heuristic_reward += 20.0
 
         return heuristic_reward
 
