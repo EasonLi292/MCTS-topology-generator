@@ -1095,8 +1095,8 @@ class Breadboard:
         elif comp_type == 'diode':
             return f"{comp_id} {pin_nets[0]} {pin_nets[1]} DMOD"
         elif comp_type == 'nmos3':
-            # NMOS: Drain Gate Source Bulk (Bulk tied to source)
-            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} {pin_nets[2]} NMOS_MODEL L=1u W=10u"
+            # NMOS: Drain Gate Source Bulk (Bulk tied to VSS/ground)
+            return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} 0 NMOS_MODEL L=1u W=10u"
         elif comp_type == 'pmos3':
             # PMOS: Drain Gate Source Bulk (Bulk tied to VDD)
             return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} VDD PMOS_MODEL L=1u W=10u"
