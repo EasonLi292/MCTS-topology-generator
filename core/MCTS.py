@@ -12,6 +12,16 @@ INCOMPLETE_REWARD_CAP = 20.0
 # Completed circuits should always dominate heuristic-only scores; align with SPICE baseline
 COMPLETION_BASELINE_REWARD = 100.0
 
+# Heuristic scaling: estimate maximum possible raw heuristic score
+# Component count: ~10 × 6.0 = 60
+# Unique types: ~7 × 10.0 = 70
+# Connection bonus: ~30
+# VDD/VSS/VOUT bonuses: 15 + 15 + 30 = 60
+# All components reachable: 20
+# MAX_RAW_HEURISTIC ≈ 240
+MAX_RAW_HEURISTIC = 240.0
+HEURISTIC_SCALE_FACTOR = INCOMPLETE_REWARD_CAP / MAX_RAW_HEURISTIC
+
 # Deterministic expansion order for reproducibility
 random.seed(1)
 
@@ -236,7 +246,8 @@ class MCTS:
             return self._evaluate_with_spice(state, metrics, heuristic_reward, stats)
         else:
             # Incomplete circuit: use heuristic only (always positive)
-            # Cap lower than completed baseline so MCTS still prefers completion
+            # Heuristic is pre-scaled to fit within [0, INCOMPLETE_REWARD_CAP]
+            # Min/max ensures it stays in valid range (defensive programming)
             heuristic_only = max(0.0, min(heuristic_reward, INCOMPLETE_REWARD_CAP))
             if stats:
                 stats.record_heuristic_reward(heuristic_only)
@@ -332,40 +343,47 @@ class MCTS:
 
         Encourages circuits with diverse components and proper connectivity.
         IMPROVED: Added progressive rewards for meeting validation criteria.
+        Scaled to fit within INCOMPLETE_REWARD_CAP (20.0) while preserving
+        relative differences between different quality levels.
 
         Args:
             metrics: Circuit metrics dictionary
 
         Returns:
-            Heuristic reward score
+            Heuristic reward score (scaled to max of INCOMPLETE_REWARD_CAP)
         """
         connection_bonus = self._calculate_connection_bonus(metrics)
         conn = metrics.get('connectivity', {})
 
         # Heavy penalties for invalid power-rail placements or degenerate structures
+        # Scale penalties too so they remain meaningful relative to positive rewards
         if metrics.get('vin_on_power_rail') or metrics.get('vout_on_power_rail'):
-            return -25.0
+            return -25.0 * HEURISTIC_SCALE_FACTOR
         if not metrics.get('vin_vout_distinct'):
-            return -20.0
+            return -20.0 * HEURISTIC_SCALE_FACTOR
         if metrics.get('degenerate_component'):
-            return -15.0
+            return -15.0 * HEURISTIC_SCALE_FACTOR
 
         # Reward component count and diversity
-        heuristic_reward = (metrics['num_components'] * 6.0) + \
-                          (metrics['unique_types'] * 10.0) + \
-                          connection_bonus
+        raw_heuristic = (metrics['num_components'] * 6.0) + \
+                        (metrics['unique_types'] * 10.0) + \
+                        connection_bonus
 
         # Progressive rewards to strongly guide towards validity
         if conn.get('touches_vdd', False):
-            heuristic_reward += 15.0
+            raw_heuristic += 15.0
         if conn.get('touches_vss', False):
-            heuristic_reward += 15.0
+            raw_heuristic += 15.0
         if conn.get('reachable_vout', False):
-            heuristic_reward += 30.0
+            raw_heuristic += 30.0
         if conn.get('all_components_reachable'):
-            heuristic_reward += 20.0
+            raw_heuristic += 20.0
 
-        return heuristic_reward
+        # Scale to fit within [0, INCOMPLETE_REWARD_CAP]
+        # This preserves relative differences while ensuring max doesn't exceed cap
+        scaled_reward = raw_heuristic * HEURISTIC_SCALE_FACTOR
+
+        return scaled_reward
 
     def _evaluate_with_spice(self, state: Breadboard, metrics: dict,
                              heuristic_reward: float, stats: CircuitStatistics) -> float:

@@ -20,7 +20,9 @@ env/
 
 # Generated SPICE files (except examples)
 core/*.sp
-outputs/
+outputs/*.sp
+outputs/*.txt
+!outputs/README.md
 visualizations/
 *.sp
 
