@@ -44,7 +44,7 @@ def get_min_max_rows(board: Breadboard) -> Tuple[int, int]:
         if comp.type in ['vin', 'vout']:
             continue
 
-        for row, col in comp.pins:
+        for row in comp.pins:
             # For wires, skip endpoints that are at VIN/VOUT positions
             if comp.type == 'wire':
                 if row == board.VIN_ROW or row == board.VOUT_ROW:
@@ -96,7 +96,7 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
     # Process VIN/VOUT first to ensure they're placed before wires
     for comp in board.placed_components:
         if comp.type in ['vin', 'vout']:
-            new_board._place_component(comp.type, comp.pins[0][0])
+            new_board._place_component(comp.type, comp.pins[0])
             if comp.type == 'vin':
                 new_board.vin_placed = True
             elif comp.type == 'vout':
@@ -105,27 +105,27 @@ def translate_vertically(board: Breadboard, row_offset: int) -> Optional[Breadbo
     # Then process non-wire components
     for comp in board.placed_components:
         if comp.type not in ['vin', 'vout', 'wire']:
-            new_pins = [(r + row_offset, 0) for r, _ in comp.pins]
+            new_pins = [r + row_offset for r in comp.pins]
 
-            if any(not (0 <= r < board.ROWS) for r, _ in new_pins):
+            if any(not (0 <= r < board.ROWS) for r in new_pins):
                 return None  # Translation out of bounds
 
-            new_board._place_component(comp.type, new_pins[0][0])
+            new_board._place_component(comp.type, new_pins[0])
 
     # Finally process wires
     for comp in board.placed_components:
         if comp.type == 'wire':
             new_pins = []
-            for r, _ in comp.pins:
+            for r in comp.pins:
                 if r in [board.VIN_ROW, board.VOUT_ROW, board.VSS_ROW, board.VDD_ROW]:
-                    new_pins.append((r, 0))
+                    new_pins.append(r)
                 else:
-                    new_pins.append((r + row_offset, 0))
+                    new_pins.append(r + row_offset)
 
-            if any(not (0 <= r < board.ROWS) for r, _ in new_pins):
+            if any(not (0 <= r < board.ROWS) for r in new_pins):
                 return None  # Translation out of bounds
 
-            new_board._place_wire(new_pins[0][0], new_pins[1][0])
+            new_board._place_wire(new_pins[0], new_pins[1])
 
     return new_board
 

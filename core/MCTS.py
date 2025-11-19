@@ -282,9 +282,9 @@ class MCTS:
         unique_types = len({c.type for c in state.placed_components
                            if c.type not in ['wire', 'vin', 'vout']})
 
-        # Find VIN and VOUT positions
-        vin_row = next((c.pins[0][0] for c in state.placed_components if c.type == 'vin'), -1)
-        vout_row = next((c.pins[0][0] for c in state.placed_components if c.type == 'vout'), -1)
+        # Find VIN and VOUT rows
+        vin_row = next((c.pins[0] for c in state.placed_components if c.type == 'vin'), -1)
+        vout_row = next((c.pins[0] for c in state.placed_components if c.type == 'vout'), -1)
 
         # FIXED: Check if VIN and VOUT are connected through COMPONENT GRAPH
         # Use same metric as validation (reachable_vout) instead of union-find

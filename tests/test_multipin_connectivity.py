@@ -25,10 +25,10 @@ def test_resistor_pins_share_net():
     b = b.apply_action(('resistor', r_row))
 
     # Get the nets for both pins
-    position_to_net = b._build_net_mapping()
+    row_to_net = b._build_net_mapping()
 
-    pin1_net = position_to_net[(r_row, 0)]
-    pin2_net = position_to_net[(r_row + 1, 0)]
+    pin1_net = row_to_net[r_row]
+    pin2_net = row_to_net[r_row + 1]
 
     # In row-only model, each row is its own net UNLESS unified
     # Multi-pin components should NOT auto-unify rows
@@ -67,9 +67,9 @@ def test_resistor_connectivity_in_netlist():
     b = b.apply_action(('wire', b.VIN_ROW, r_row))
     b = b.apply_action(('resistor', r_row))
 
-    position_to_net = b._build_net_mapping()
-    pin1_net = position_to_net[(r_row, 0)]
-    pin2_net = position_to_net[(r_row + 1, 0)]
+    row_to_net = b._build_net_mapping()
+    pin1_net = row_to_net[r_row]
+    pin2_net = row_to_net[r_row + 1]
 
     print(f"Resistor pin 1 net: {pin1_net}")
     print(f"Resistor pin 2 net: {pin2_net}")
@@ -91,11 +91,11 @@ def test_transistor_three_pins_separate_nets():
     b = b.apply_action(('nmos3', nmos_row))
 
     # Get nets for all three pins (drain, gate, source)
-    position_to_net = b._build_net_mapping()
+    row_to_net = b._build_net_mapping()
 
-    drain_net = position_to_net[(nmos_row, 0)]
-    gate_net = position_to_net[(nmos_row + 1, 0)]
-    source_net = position_to_net[(nmos_row + 2, 0)]
+    drain_net = row_to_net[nmos_row]
+    gate_net = row_to_net[nmos_row + 1]
+    source_net = row_to_net[nmos_row + 2]
 
     print(f"Drain (row {nmos_row}): net={drain_net}")
     print(f"Gate (row {nmos_row + 1}): net={gate_net}")
@@ -124,10 +124,10 @@ def test_component_spanning_rows_connects_via_graph():
     # spanning its two pin nets
     summary = b._compute_connectivity_summary()
 
-    # Get position to net mapping
-    position_to_net = b._build_net_mapping()
-    pin1_net = position_to_net[(r_row, 0)]
-    pin2_net = position_to_net[(r_row + 1, 0)]
+    # Get row to net mapping
+    row_to_net = b._build_net_mapping()
+    pin1_net = row_to_net[r_row]
+    pin2_net = row_to_net[r_row + 1]
 
     print(f"Resistor connects net {pin1_net} to net {pin2_net}")
     print(f"Component nets: {summary['component_nets']}")

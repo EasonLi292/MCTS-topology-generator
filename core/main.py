@@ -410,8 +410,9 @@ def _generate_circuit_visualization(board: Breadboard, reward: float,
         comp_counter[symbol] += 1
         comp_id = f'{symbol}{comp_counter[symbol]}'
 
-        for i, (r, c) in enumerate(comp.pins):
-            grid_vis[r][c] = f'{comp_id}{i+1}'
+        for i, r in enumerate(comp.pins):
+            # In row-based model, there's only one column (index 0)
+            grid_vis[r][0] = f'{comp_id}{i+1}'
 
     # Print grid header
     header = "      "
@@ -451,8 +452,8 @@ def _generate_circuit_visualization(board: Breadboard, reward: float,
     wires = [c for c in board.placed_components if c.type == 'wire']
     if wires:
         for i, wire in enumerate(wires, 1):
-            p1, p2 = wire.pins
-            lines.append(f"W{i}: ({p1[0]},{p1[1]}) → ({p2[0]},{p2[1]})")
+            r1, r2 = wire.pins
+            lines.append(f"W{i}: row {r1} → row {r2}")
     else:
         lines.append("  No wires placed")
 

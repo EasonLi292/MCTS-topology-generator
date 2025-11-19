@@ -88,7 +88,7 @@ class NodeType(Enum):
 @dataclass
 class Component:
     type: str
-    pins: List[Tuple[int, int]]
+    pins: List[int]  # List of row indices where component pins are placed
     id: int = 0
 
 
@@ -96,15 +96,14 @@ class Component:
 class PinRecord:
     component: Component
     pin_index: int
-    col: int = 0  # retained for compatibility; always 0 in node model
 
 
 class RowPinIndex:
     """
-    Tracks which pins exist on each row, abstracting away the 2D grid.
+    Tracks which pins exist on each row in the row-based connectivity model.
 
-    Connectivity is row-based, but we keep column metadata for placement
-    rules and for debugging/serialization.
+    Each row is a single electrical net, and this index tracks which component
+    pins occupy each row.
     """
 
     def __init__(self, rows: int):
@@ -115,13 +114,13 @@ class RowPinIndex:
         new_index._rows = copy.deepcopy(self._rows)
         return new_index
 
-    def is_empty(self, row: int, col: int = 0) -> bool:
+    def is_empty(self, row: int) -> bool:
         return 0 <= row < len(self._rows) and len(self._rows[row]) == 0
 
-    def place_pin(self, row: int, col: int, component: Component, pin_index: int):
-        self._rows[row].append(PinRecord(component, pin_index, col))
+    def place_pin(self, row: int, component: Component, pin_index: int):
+        self._rows[row].append(PinRecord(component, pin_index))
 
-    def get_pin(self, row: int, col: int = 0) -> Optional[PinRecord]:
+    def get_pin(self, row: int) -> Optional[PinRecord]:
         if 0 <= row < len(self._rows) and self._rows[row]:
             # Return the first pin (all share the row net)
             return self._rows[row][0]
@@ -144,7 +143,6 @@ class RowPinIndex:
                 continue
             view[row_idx] = [
                 {
-                    "col": pin.col,
                     "component": pin.component.type,
                     "component_id": pin.component.id,
                     "pin_index": pin.pin_index,
@@ -243,18 +241,18 @@ class Breadboard:
             else:
                 self.uf_parent[root2] = root1
 
-    def is_empty(self, row: int, col: int = 0) -> bool:
-        return self.row_pin_index.is_empty(row, col)
+    def is_empty(self, row: int) -> bool:
+        return self.row_pin_index.is_empty(row)
 
     def is_row_active(self, row: int) -> bool:
         return self.find(row) in self.active_nets
 
-    def get_pin_at(self, row: int, col: int = 0) -> Optional["PinRecord"]:
-        """Returns the pin record at a specific row/col, if any."""
-        return self.row_pin_index.get_pin(row, col)
+    def get_pin_at(self, row: int) -> Optional["PinRecord"]:
+        """Returns the pin record at a specific row, if any."""
+        return self.row_pin_index.get_pin(row)
 
     def pins_in_row(self, row: int) -> List[PinRecord]:
-        """Returns all pins that occupy a given row (any column)."""
+        """Returns all pins that occupy a given row."""
         return self.row_pin_index.pins_in_row(row)
 
     def row_pin_summary(self) -> Dict[int, List[Dict[str, object]]]:
@@ -288,16 +286,34 @@ class Breadboard:
         # Component can only be placed if at least one pin touches an active net
         # This ensures circuits are built by extending from active nets with wires first
         pins_touch_active = any(self.is_row_active(r) for r in pin_rows)
+        if not pins_touch_active:
+            return False
 
-        return pins_touch_active
+        # Prevent degenerate components: all pins must not be on the same net
+        # A component with all pins on the same net is electrically useless
+        pin_nets = {self.find(r) for r in pin_rows}
+        if len(pin_nets) < 2:
+            return False  # All pins would be on same net - degenerate component
+
+        # Prevent duplicate component topologies: don't place same component type
+        # across the same set of nets (e.g., two resistors both connecting n0 to n1)
+        # This creates redundant parallel components that don't add topological diversity
+        net_signature = tuple(sorted(pin_nets))
+        for existing_comp in self.placed_components:
+            if existing_comp.type == comp_type and existing_comp.type not in ['vin', 'vout', 'wire']:
+                existing_nets = tuple(sorted({self.find(r) for r in existing_comp.pins}))
+                if existing_nets == net_signature:
+                    return False  # Same component type already spans these exact nets
+
+        return True
 
     def can_place_wire(self, r1: int, r2: int) -> bool:
         """
-        Checks if a wire can be legally placed between two positions.
+        Checks if a wire can be legally placed between two rows.
 
         Args:
-            r1, c1: First endpoint position
-            r2, c2: Second endpoint position
+            r1: First endpoint row
+            r2: Second endpoint row
 
         Returns:
             True if wire placement is valid
@@ -323,8 +339,8 @@ class Breadboard:
             if endpoint_rows == pair:
                 return False
 
-        # Check if positions are within bounds
-        if not self._is_position_valid(r1, 0) or not self._is_position_valid(r2, 0):
+        # Check if rows are within bounds
+        if not self._is_position_valid(r1) or not self._is_position_valid(r2):
             return False
 
         # Check for duplicate wire
@@ -336,36 +352,36 @@ class Breadboard:
             return False
 
         # Check gate/base pin connection rules
-        if not self._validate_control_pin_wiring(r1, 0, r2, 0):
+        if not self._validate_control_pin_wiring(r1, r2):
             return False
 
         return True
 
-    def _is_mos_gate_cell(self, row: int, col: int) -> bool:
-        if not self._is_position_valid(row, col):
+    def _is_mos_gate_cell(self, row: int) -> bool:
+        if not self._is_position_valid(row):
             return False
-        pin = self.row_pin_index.get_pin(row, col)
+        pin = self.row_pin_index.get_pin(row)
         if pin is None:
             return False
         component = pin.component
         pin_index = pin.pin_index
         return component.type in ['nmos3', 'pmos3'] and pin_index == 1
 
-    def _is_position_valid(self, row: int, col: int = 0) -> bool:
+    def _is_position_valid(self, row: int) -> bool:
         """
-        Checks if a position is within the breadboard bounds.
+        Checks if a row is within the breadboard bounds.
 
         Args:
             row: Row index
 
         Returns:
-            True if position is valid
+            True if row is valid
         """
         return 0 <= row < self.ROWS
 
     def _is_duplicate_wire(self, r1: int, r2: int) -> bool:
         """
-        Checks if a wire already exists between two positions.
+        Checks if a wire already exists between two rows.
 
         Args:
             r1: First endpoint row
@@ -377,7 +393,7 @@ class Breadboard:
         wire_key = tuple(sorted((r1, r2)))
         return wire_key in self.placed_wires
 
-    def _validate_control_pin_wiring(self, r1: int, c1: int, r2: int, c2: int) -> bool:
+    def _validate_control_pin_wiring(self, r1: int, r2: int) -> bool:
         """
         Validates that gate/base pins are not directly connected to power rails.
 
@@ -386,8 +402,8 @@ class Breadboard:
         connected to VDD or VSS.
 
         Args:
-            r1, c1: First endpoint position
-            r2, c2: Second endpoint position
+            r1: First endpoint row
+            r2: Second endpoint row
 
         Returns:
             True if wiring is valid
@@ -432,11 +448,13 @@ class Breadboard:
 
         Requirements:
         1. VIN and VOUT must be placed
-        2. All components must be connected (including VIN-VOUT path)
-        3. Gate/Base pins must not be directly connected to VDD/VSS
+        2. All components must be connected in a VIN-VOUT path through components
+        3. Circuit must have at least MIN_ACTIVE_COMPONENTS (2) non-wire components
+        4. Circuit must touch both power rails (VDD and VSS)
+        5. Gate/Base pins must not be directly placed on VDD/VSS rows
 
-        Note: VIN-VOUT connectivity is now checked within _all_components_connected()
-        using position-based net mapping for accurate validation.
+        Returns:
+            True if circuit meets all validity requirements
         """
         if not (self.vin_placed and self.vout_placed):
             return False
@@ -453,14 +471,19 @@ class Breadboard:
 
     def _all_components_connected(self) -> bool:
         """
-        Verify that all component pins are part of the main circuit.
-        No floating/disconnected components allowed.
+        Verify that all components form a valid circuit path from VIN to VOUT.
 
-        Uses position-based connectivity (same as netlist generation) to ensure
-        validation matches actual electrical connectivity.
+        This checks:
+        - VIN can reach VOUT through component connections
+        - All components are reachable from VIN (no floating components)
+        - Circuit has minimum number of active components
+        - Circuit touches both power rails (VDD and VSS)
+
+        Uses the connectivity summary computed from the actual net mapping
+        to ensure validation matches electrical connectivity.
 
         Returns:
-            True if all components are connected to the VIN-VOUT path
+            True if circuit forms a valid VIN-VOUT path meeting all requirements
         """
         summary = self._compute_connectivity_summary()
         return summary.get("valid", False)
@@ -470,26 +493,27 @@ class Breadboard:
         Ensure gate (MOSFET) and base (BJT) pins are not directly placed on
         VDD or VSS power rail rows.
 
-        This prevents direct shorts but allows gates/bases to be in circuits
-        that have other components connected to power rails.
+        This prevents direct shorts but allows gates/bases to be connected to
+        power rails indirectly through other circuit components.
 
-        Gate = pin 1 (index 1) for NMOS/PMOS
-        Base = pin 1 (index 1) for NPN/PNP
+        Pin configuration:
+        - MOSFET (nmos3/pmos3): pins[0]=drain, pins[1]=gate, pins[2]=source
+        - BJT (npn/pnp): pins[0]=collector, pins[1]=base, pins[2]=emitter
 
         Returns:
-            True if all gate/base connections are valid
+            True if all gate/base pins are valid (not on VDD_ROW or VSS_ROW)
         """
         for comp in self.placed_components:
             # Check MOSFET gate pins
             if comp.type in ['nmos3', 'pmos3']:
-                gate_row = comp.pins[1][0]  # Gate is second pin (index 1)
+                gate_row = comp.pins[1]  # Gate is second pin (index 1)
                 # Gate cannot be placed directly on VDD or VSS rows
                 if gate_row == self.VDD_ROW or gate_row == self.VSS_ROW:
                     return False
 
             # Check BJT base pins
             elif comp.type in ['npn', 'pnp']:
-                base_row = comp.pins[1][0]  # Base is second pin (index 1)
+                base_row = comp.pins[1]  # Base is second pin (index 1)
                 # Base cannot be placed directly on VDD or VSS rows
                 if base_row == self.VDD_ROW or base_row == self.VSS_ROW:
                     return False
@@ -571,7 +595,14 @@ class Breadboard:
 
     def _add_stop_action_if_valid(self, actions: List[Tuple]):
         """
-        Adds STOP action if the circuit is complete and has minimum complexity.
+        Adds STOP action if the circuit meets all validity requirements.
+
+        The STOP action is only available when:
+        - Circuit is complete and valid (per is_complete_and_valid())
+        - Has at least 1 non-wire component (for backwards compatibility)
+
+        Note: is_complete_and_valid() already enforces MIN_ACTIVE_COMPONENTS (2),
+        so the num_components >= 1 check here is redundant but kept for clarity.
 
         Args:
             actions: List to append STOP action to
@@ -580,8 +611,7 @@ class Breadboard:
         num_components = len([c for c in self.placed_components
                              if c.type not in ['wire', 'vin', 'vout']])
 
-        # RELAXED: Remove rails_connected requirement
-        # Only allow STOP if circuit is complete and has minimum complexity
+        # Only allow STOP if circuit is complete and valid
         if self.is_complete_and_valid() and num_components >= 1:
             actions.append(("STOP",))
 
@@ -596,21 +626,25 @@ class Breadboard:
     def _place_component(self, comp_type: str, start_row: int) -> Optional[Component]:
         """(Internal) Mutates the board state by placing a component.
 
-        Note: Each component pin activates its ENTIRE ROW (not just the specific cell).
-        Multi-pin components automatically unite their rows into a single net.
+        Places a component starting at start_row with pins occupying consecutive rows.
+        Each pin activates its entire row in the active_nets set.
+
+        Note: Component pins do NOT automatically unite rows in the union-find structure.
+        Components create edges in the connectivity graph during validation/netlist generation.
+        This allows detection of degenerate components (all pins already on same net).
         """
         info = COMPONENT_CATALOG[comp_type]
         self.component_counter += 1
         component = Component(
             type=comp_type,
-            pins=[(r, 0) for r in range(start_row, start_row + info.pin_count)],
+            pins=list(range(start_row, start_row + info.pin_count)),
             id=self.component_counter
         )
         self.placed_components.append(component)
 
         # Occupy rows and activate nets for all pins
-        for i, (r, c) in enumerate(component.pins):
-            self.row_pin_index.place_pin(r, c, component, i)
+        for i, r in enumerate(component.pins):
+            self.row_pin_index.place_pin(r, component, i)
             self.active_nets.add(self.find(r))
 
         # NOTE: Component pins are NOT auto-unified in union-find structure
@@ -621,16 +655,23 @@ class Breadboard:
         return component
 
     def _place_wire(self, r1: int, r2: int) -> Optional[Component]:
-        """(Internal) Mutates the board state by placing a wire.
+        """(Internal) Mutates the board state by placing a wire between two rows.
 
-        Note: Wire unions ENTIRE ROWS (r1 and r2), not just the specific cells.
+        Unites the entire rows r1 and r2 into a single electrical net using union-find.
         This is consistent with the row-based connectivity model where each row
-        is a single electrical net.
+        is a single electrical net (like a real breadboard).
+
+        Args:
+            r1: First endpoint row
+            r2: Second endpoint row
+
+        Returns:
+            The created wire component, or None if placement fails
         """
         self.placed_wires.add(tuple(sorted((r1, r2))))
-        self.union(r1, r2)  # Unions entire rows, not just (r1,c1) and (r2,c2) cells
+        self.union(r1, r2)  # Unions entire rows
         self.component_counter += 1
-        component = Component(type="wire", pins=[(r1, 0), (r2, 0)], id=self.component_counter)
+        component = Component(type="wire", pins=[r1, r2], id=self.component_counter)
         self.placed_components.append(component)
         self.active_nets.add(self.find(r1))
         return component
@@ -656,6 +697,17 @@ class Breadboard:
         return new_board
         
     def __hash__(self) -> int:
+        """
+        Generate hash for board state based on placed components.
+
+        Creates a canonical representation by sorting components, which enables
+        deduplication of equivalent board states during MCTS search.
+        Pin list order is preserved within each component to maintain polarity
+        (e.g., diode anode vs cathode, transistor pin ordering).
+
+        Returns:
+            Hash of the board's component configuration
+        """
         # Preserve pin order to maintain component polarity (e.g., diode orientation)
         component_tuple = tuple(sorted(
             (c.type, tuple(c.pins)) for c in self.placed_components
@@ -669,45 +721,59 @@ class Breadboard:
         """
         Converts the breadboard circuit to a SPICE netlist format.
 
-        Returns None if the circuit is not complete and valid.
-
-        Strategy: Build a connectivity graph where component pins get unique nets,
-        then merge nets connected by wires.
+        Strategy:
+        1. Build net mapping from component pin positions using union-find row roots
+        2. Assign net names (0 for ground, VDD for power, n0-nN for other nets)
+        3. Generate SPICE netlist sections in order:
+           - Header comment
+           - Device models (must come before component instances)
+           - Power supply (VDD)
+           - Input source (VIN)
+           - Circuit components (resistors, capacitors, transistors, etc.)
+           - Output probe (VOUT)
+           - Simulation commands
 
         Returns:
-            SPICE netlist string, or None if circuit is invalid
+            SPICE netlist string, or None if circuit is not complete and valid
         """
         if not self.is_complete_and_valid():
             return None
 
         # Build net connectivity map
-        position_to_net = self._build_net_mapping()
+        row_to_net = self._build_net_mapping()
 
         # Generate netlist sections
         lines = self._generate_netlist_header()
         lines.extend(self._generate_device_models())  # Models must be defined before components
         lines.extend(self._generate_power_supply())
-        lines.extend(self._generate_input_source(position_to_net))
-        lines.extend(self._generate_circuit_components(position_to_net))
-        lines.extend(self._generate_output_probe(position_to_net))
+        lines.extend(self._generate_input_source(row_to_net))
+        lines.extend(self._generate_circuit_components(row_to_net))
+        lines.extend(self._generate_output_probe(row_to_net))
         lines.extend(self._generate_simulation_commands())
 
         return "\n".join(lines)
 
-    def _build_net_mapping(self) -> Dict[Tuple[int, int], str]:
+    def _build_net_mapping(self) -> Dict[int, str]:
         """
-        Builds a mapping from positions to net names, handling wire connections.
+        Builds a mapping from component pin rows to net names.
+
+        Uses the union-find structure to determine which net each row belongs to.
+        Rows with the same root get the same net name.
+
+        Special nets:
+        - VSS_ROW root -> "0" (ground)
+        - VDD_ROW root -> "VDD" (power supply)
+        - Other roots -> "n0", "n1", "n2", etc.
 
         Returns:
-            Dictionary mapping (row, col) positions to net names
+            Dictionary mapping row indices to net names (e.g., "0", "VDD", "n0")
         """
-        position_to_net: Dict[Tuple[int, int], str] = {}
+        row_to_net: Dict[int, str] = {}
         root_to_net: Dict[int, str] = {}
         net_counter = 0
 
         for comp in self.placed_components:
-            for pin in comp.pins:
-                row = pin[0]
+            for row in comp.pins:
                 root = self.find(row)
                 if root not in root_to_net:
                     if root == self.VSS_ROW:
@@ -717,13 +783,16 @@ class Breadboard:
                     else:
                         root_to_net[root] = f"n{net_counter}"
                         net_counter += 1
-                position_to_net[pin] = root_to_net[root]
+                row_to_net[row] = root_to_net[root]
 
-        return position_to_net
+        return row_to_net
 
     def _collect_all_positions(self) -> Set[Tuple[int, int]]:
         """
         Collects all positions occupied by component pins.
+
+        Note: This method is not used in the current implementation but is kept
+        for potential future use or debugging purposes.
 
         Returns:
             Set of (row, col) positions
@@ -737,6 +806,10 @@ class Breadboard:
     def _assign_initial_nets(self, positions: Set[Tuple[int, int]]) -> Dict[Tuple[int, int], str]:
         """
         Assigns initial net names to all positions.
+
+        Note: This method is not used in the current implementation but is kept
+        for potential future use. The current implementation uses _build_net_mapping()
+        which directly uses the union-find structure.
 
         Power rails get special names (0 for ground, VDD for power).
         Other positions get unique net names.
@@ -767,7 +840,11 @@ class Breadboard:
 
     def _merge_connected_nets(self, position_to_net: Dict[Tuple[int, int], str]):
         """
-        Merges nets that are connected by wires and multi-pin components using union-find.
+        Merges nets that are connected by wires using union-find.
+
+        Note: This method is not used in the current implementation but is kept
+        for potential future use. The current implementation uses _build_net_mapping()
+        which directly uses the board's existing union-find structure.
 
         Args:
             position_to_net: Dictionary to update with merged net names
@@ -808,12 +885,12 @@ class Breadboard:
         for pin in position_to_net:
             position_to_net[pin] = find_net(position_to_net[pin])
 
-    def _collect_wire_connections(self) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    def _collect_wire_connections(self) -> List[Tuple[int, int]]:
         """
         Collects all wire connections from placed components.
 
         Returns:
-            List of wire endpoint pairs
+            List of wire endpoint row pairs
         """
         wire_connections = []
         for comp in self.placed_components:
@@ -823,11 +900,33 @@ class Breadboard:
 
     def get_connectivity_summary(self) -> Dict[str, object]:
         """
-        Returns a summary of connectivity between VIN, VOUT, supply rails, and components.
+        Returns a detailed summary of circuit connectivity and validity.
+
+        The summary includes:
+        - VIN/VOUT presence and net assignments
+        - Component connectivity (which nets have components)
+        - Reachability from VIN to VOUT through components
+        - Power rail connections (VDD/VSS)
+        - Validity checks (degenerate components, floating components, etc.)
+
+        Returns:
+            Dictionary with connectivity information and validation results
         """
         return self._compute_connectivity_summary()
 
     def _compute_connectivity_summary(self) -> Dict[str, object]:
+        """
+        Computes detailed connectivity summary by building a component connectivity graph.
+
+        This method:
+        1. Maps all component pins to their net names using union-find
+        2. Builds an adjacency graph where components create edges between nets
+        3. Performs BFS from VIN net to find all reachable nets
+        4. Validates circuit requirements (connectivity, power rails, no degeneracies)
+
+        Returns:
+            Dictionary with validation results and connectivity information
+        """
         summary: Dict[str, object] = {
             "vin_present": self.vin_placed,
             "vout_present": self.vout_placed,
@@ -852,7 +951,7 @@ class Breadboard:
         if not (self.vin_placed and self.vout_placed):
             return summary
 
-        position_to_net = self._build_net_mapping()
+        row_to_net = self._build_net_mapping()
 
         vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
         vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
@@ -860,8 +959,8 @@ class Breadboard:
         if not vin_comp or not vout_comp:
             return summary
 
-        vin_net = position_to_net[vin_comp.pins[0]]
-        vout_net = position_to_net[vout_comp.pins[0]]
+        vin_net = row_to_net[vin_comp.pins[0]]
+        vout_net = row_to_net[vout_comp.pins[0]]
         summary["vin_net"] = vin_net
         summary["vout_net"] = vout_net
 
@@ -890,7 +989,7 @@ class Breadboard:
 
             has_active_components = True
             component_count += 1
-            nets = {position_to_net[pin] for pin in comp.pins}
+            nets = {row_to_net[row] for row in comp.pins}
 
             if len(nets) < 2:
                 summary["degenerate_component"] = True
@@ -951,49 +1050,64 @@ class Breadboard:
         return summary
 
     def _generate_netlist_header(self) -> List[str]:
-        """Generates the netlist header comment."""
+        """
+        Generates the SPICE netlist header comment.
+
+        Returns:
+            List containing header comment lines
+        """
         return [
             "* Auto-generated SPICE netlist from MCTS topology generator",
             ""
         ]
 
     def _generate_power_supply(self) -> List[str]:
-        """Generates power supply voltage source."""
+        """
+        Generates power supply voltage source (VDD).
+
+        Returns:
+            List containing VDD voltage source definition (5V DC)
+        """
         return [
             "* Power supply",
             "VDD VDD 0 DC 5V",
             ""
         ]
 
-    def _generate_input_source(self, position_to_net: Dict[Tuple[int, int], str]) -> List[str]:
+    def _generate_input_source(self, row_to_net: Dict[int, str]) -> List[str]:
         """
-        Generates input signal source (VIN).
+        Generates input signal source (VIN) for AC analysis.
+
+        Creates an AC voltage source with 1V amplitude at the VIN net.
 
         Args:
-            position_to_net: Net mapping dictionary
+            row_to_net: Net mapping dictionary from _build_net_mapping()
 
         Returns:
-            List of netlist lines
+            List of SPICE netlist lines for input source
         """
         lines = []
         vin_comp = next((c for c in self.placed_components if c.type == 'vin'), None)
         if vin_comp:
-            vin_pos = vin_comp.pins[0]
-            vin_net = position_to_net[vin_pos]
+            vin_row = vin_comp.pins[0]
+            vin_net = row_to_net[vin_row]
             lines.append("* Input signal")
             lines.append(f"VIN {vin_net} 0 AC 1V")
             lines.append("")
         return lines
 
-    def _generate_circuit_components(self, position_to_net: Dict[Tuple[int, int], str]) -> List[str]:
+    def _generate_circuit_components(self, row_to_net: Dict[int, str]) -> List[str]:
         """
         Generates SPICE lines for all circuit components.
 
+        Iterates through all placed components (excluding VIN, VOUT, and wires)
+        and generates the appropriate SPICE component line for each.
+
         Args:
-            position_to_net: Net mapping dictionary
+            row_to_net: Net mapping dictionary from _build_net_mapping()
 
         Returns:
-            List of netlist lines
+            List of SPICE netlist lines for circuit components
         """
         lines = ["* Circuit components"]
         comp_counters = {}
@@ -1002,7 +1116,7 @@ class Breadboard:
             if comp.type in ['vin', 'vout', 'wire']:
                 continue  # Skip markers and wires
 
-            spice_line = self._generate_component_line(comp, position_to_net, comp_counters)
+            spice_line = self._generate_component_line(comp, row_to_net, comp_counters)
             if spice_line:
                 lines.append(spice_line)
 
@@ -1010,24 +1124,27 @@ class Breadboard:
         return lines
 
     def _generate_component_line(self, comp: Component,
-                                 position_to_net: Dict[Tuple[int, int], str],
+                                 row_to_net: Dict[int, str],
                                  comp_counters: Dict[str, int]) -> Optional[str]:
         """
         Generates a SPICE netlist line for a single component.
 
+        Gets the component ID (e.g., R1, C2, M3), maps pins to net names,
+        and formats the appropriate SPICE line.
+
         Args:
             comp: Component to generate line for
-            position_to_net: Net mapping dictionary
-            comp_counters: Dictionary tracking component counts by type
+            row_to_net: Net mapping dictionary from _build_net_mapping()
+            comp_counters: Dictionary tracking component counts by type for ID generation
 
         Returns:
-            SPICE netlist line, or None if component should be skipped
+            SPICE netlist line string, or None if component should be skipped
         """
         # Get component ID
         comp_id = self._get_component_id(comp.type, comp_counters)
 
         # Get net names for component pins
-        pin_nets = [position_to_net[pin] for pin in comp.pins]
+        pin_nets = [row_to_net[row] for row in comp.pins]
 
         # Generate SPICE line based on component type
         return self._format_component_spice_line(comp.type, comp_id, pin_nets)
@@ -1036,9 +1153,17 @@ class Breadboard:
         """
         Gets a unique component ID for SPICE netlist.
 
+        Uses SPICE naming conventions:
+        - R for resistors
+        - C for capacitors
+        - L for inductors
+        - D for diodes
+        - M for MOSFETs (both NMOS and PMOS share counter)
+        - Q for BJTs (both NPN and PNP share counter)
+
         Args:
-            comp_type: Type of component
-            comp_counters: Dictionary tracking component counts
+            comp_type: Type of component (e.g., 'resistor', 'nmos3', 'npn')
+            comp_counters: Dictionary tracking component counts for ID generation
 
         Returns:
             Component ID string (e.g., "R1", "M2", "Q1")
@@ -1078,13 +1203,22 @@ class Breadboard:
         """
         Formats a SPICE netlist line for a component.
 
+        Generates the appropriate SPICE syntax for each component type with
+        default parameter values:
+        - Resistors: 1kΩ
+        - Capacitors: 1µF
+        - Inductors: 1mH
+        - Diodes: DMOD model
+        - MOSFETs: L=1µm, W=10µm with bulk connections (NMOS bulk to ground, PMOS bulk to VDD)
+        - BJTs: NPN_MODEL or PNP_MODEL
+
         Args:
-            comp_type: Type of component
-            comp_id: Component identifier
+            comp_type: Type of component (e.g., 'resistor', 'nmos3', 'npn')
+            comp_id: Component identifier (e.g., 'R1', 'M2', 'Q1')
             pin_nets: List of net names for component pins
 
         Returns:
-            Formatted SPICE line
+            Formatted SPICE line, or None if component type is unknown
         """
         if comp_type == 'resistor':
             return f"{comp_id} {pin_nets[0]} {pin_nets[1]} 1k"
@@ -1108,28 +1242,42 @@ class Breadboard:
             return f"{comp_id} {pin_nets[0]} {pin_nets[1]} {pin_nets[2]} PNP_MODEL"
         return None
 
-    def _generate_output_probe(self, position_to_net: Dict[Tuple[int, int], str]) -> List[str]:
+    def _generate_output_probe(self, row_to_net: Dict[int, str]) -> List[str]:
         """
-        Generates output probe (VOUT).
+        Generates output probe (VOUT) for AC analysis.
+
+        Creates a .print statement to output the AC voltage at the VOUT net.
 
         Args:
-            position_to_net: Net mapping dictionary
+            row_to_net: Net mapping dictionary from _build_net_mapping()
 
         Returns:
-            List of netlist lines
+            List of SPICE netlist lines for output probe
         """
         lines = []
         vout_comp = next((c for c in self.placed_components if c.type == 'vout'), None)
         if vout_comp:
-            vout_pos = vout_comp.pins[0]
-            vout_net = position_to_net[vout_pos]
+            vout_row = vout_comp.pins[0]
+            vout_net = row_to_net[vout_row]
             lines.append("* Output probe")
             lines.append(f".print ac v({vout_net})")
             lines.append("")
         return lines
 
     def _generate_device_models(self) -> List[str]:
-        """Generates device model definitions."""
+        """
+        Generates SPICE device model definitions.
+
+        Defines models for:
+        - DMOD: Simple diode model
+        - NMOS_MODEL: NMOS transistor (VTO=0.7V, KP=20µA/V²)
+        - PMOS_MODEL: PMOS transistor (VTO=-0.7V, KP=10µA/V²)
+        - NPN_MODEL: NPN BJT (BF=100)
+        - PNP_MODEL: PNP BJT (BF=100)
+
+        Returns:
+            List of SPICE .model statements
+        """
         return [
             "* Device models",
             ".model DMOD D",
@@ -1141,7 +1289,16 @@ class Breadboard:
         ]
 
     def _generate_simulation_commands(self) -> List[str]:
-        """Generates simulation control commands."""
+        """
+        Generates SPICE simulation control commands.
+
+        Sets up AC analysis with:
+        - Decade sweep (100 points per decade)
+        - Frequency range: 1 Hz to 1 MHz
+
+        Returns:
+            List of SPICE simulation command lines
+        """
         return [
             "* Simulation commands",
             ".ac dec 100 1 1MEG",
